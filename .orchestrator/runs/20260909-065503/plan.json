@@ -1,0 +1,26 @@
+{
+  "note": "S2 병렬 조각만 검사한다. S1(test-author)은 순차라 대상이 아니다.",
+  "pieces": [
+    {
+      "id": "A-backend",
+      "writes": [
+        "lib/prompt.ts",
+        "lib/parse.ts",
+        "lib/errors.ts",
+        "lib/image.ts",
+        "lib/gemini.ts",
+        "app/api/analyze/route.ts"
+      ]
+    },
+    {
+      "id": "B-frontend",
+      "writes": [
+        "app/page.tsx",
+        "app/components/UploadPanel.tsx",
+        "app/components/ResultView.tsx",
+        "app/components/ErrorBanner.tsx",
+        "app/components/NoFaceNotice.tsx"
+      ]
+    }
+  ]
+}
