@@ -1,82 +1,110 @@
 'use client';
 
-import { useState, useRef } from 'react';
-import Image from 'next/image';
-import { analyzeFaceWithGemini } from '@/lib/gemini';
+import { useRef, useState } from 'react';
+import {
+  ALLOWED_MIME_TYPES,
+  MAX_IMAGE_BYTES,
+  type AnalyzeErrorCode,
+  type AnalyzeResponseBody,
+  type FaceReading,
+} from '@/lib/types';
+import UploadPanel from './components/UploadPanel';
+import ResultView from './components/ResultView';
+import ErrorBanner from './components/ErrorBanner';
+import NoFaceNotice from './components/NoFaceNotice';
+
+/** 결과와 오류가 동시에 보이는 상태를 구조적으로 막기 위한 판별 유니온 */
+type View =
+  | { phase: 'idle' }
+  | { phase: 'loading' }
+  | { phase: 'result'; result: FaceReading }
+  | { phase: 'error'; code: AnalyzeErrorCode; message: string };
 
 export default function Home() {
-  const [image, setImage] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [result, setResult] = useState<{
-    features: string;
-    personality: string;
-    fortune: string;
-  } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [view, setView] = useState<View>({ phase: 'idle' });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // 파일 형식 확인
-    if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) {
-      setError('JPEG, PNG, WebP, GIF 형식의 이미지만 지원합니다.');
+    if (!ALLOWED_MIME_TYPES.includes(file.type as (typeof ALLOWED_MIME_TYPES)[number])) {
+      setView({
+        phase: 'error',
+        code: 'BAD_IMAGE_FORMAT',
+        message: 'JPEG, PNG, WebP 형식의 이미지만 지원합니다. 다른 파일을 선택해주세요.',
+      });
+      return;
+    }
+
+    if (file.size > MAX_IMAGE_BYTES) {
+      setView({
+        phase: 'error',
+        code: 'IMAGE_TOO_LARGE',
+        message: '이미지 용량이 너무 큽니다. 4MB 이하의 사진을 선택해주세요.',
+      });
       return;
     }
 
     const reader = new FileReader();
     reader.onloadend = () => {
-      setImage(reader.result as string);
       setPreview(reader.result as string);
-      setError(null);
-      setResult(null);
+      setView({ phase: 'idle' });
     };
     reader.readAsDataURL(file);
   };
 
-  const handleAnalyze = async () => {
-    if (!image) {
-      setError('사진을 선택해주세요.');
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ image }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || '분석 중 오류가 발생했습니다.');
-      }
-
-      const data = await response.json();
-      setResult(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleReset = () => {
-    setImage(null);
+  const handleClearPreview = () => {
     setPreview(null);
-    setResult(null);
-    setError(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
+
+  const handleAnalyze = async () => {
+    if (!preview) return;
+
+    setView({ phase: 'loading' });
+
+    try {
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: preview }),
+      });
+
+      const body: AnalyzeResponseBody = await response.json();
+
+      if (body.ok) {
+        setView({ phase: 'result', result: body.result });
+      } else {
+        setView({ phase: 'error', code: body.code, message: body.message });
+      }
+    } catch {
+      setView({
+        phase: 'error',
+        code: 'UPSTREAM_FAILED',
+        message: '분석 서버와 통신하는 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.',
+      });
+    }
+  };
+
+  /** 오류 화면에서 업로드 화면으로 돌아간다. 미리보기는 유지한다. */
+  const handleBackToUpload = () => {
+    setView({ phase: 'idle' });
+  };
+
+  /** 결과 화면에서 완전히 초기화한다 (B6): 미리보기·결과·오류를 모두 지운다. */
+  const handleReset = () => {
+    setPreview(null);
+    setView({ phase: 'idle' });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const isLoading = view.phase === 'loading';
 
   return (
     <main className="min-h-screen flex items-center justify-center p-4">
@@ -89,113 +117,33 @@ export default function Home() {
 
         {/* Main Content */}
         <div className="bg-white/10 backdrop-blur-md rounded-2xl p-8 border border-white/20">
-          {!result ? (
-            <>
-              {/* Image Upload Section */}
-              <div className="mb-8">
-                {preview ? (
-                  <div className="relative">
-                    <img
-                      src={preview}
-                      alt="Preview"
-                      className="w-full h-auto rounded-lg object-cover max-h-96"
-                    />
-                    <button
-                      onClick={() => {
-                        setImage(null);
-                        setPreview(null);
-                        if (fileInputRef.current) {
-                          fileInputRef.current.value = '';
-                        }
-                      }}
-                      className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded-lg text-sm"
-                    >
-                      ✕ 삭제
-                    </button>
-                  </div>
-                ) : (
-                  <div
-                    onClick={() => fileInputRef.current?.click()}
-                    className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-purple-400 hover:bg-white/5 transition"
-                  >
-                    <div className="text-4xl mb-4">📷</div>
-                    <p className="text-white text-lg font-medium mb-2">사진을 업로드하세요</p>
-                    <p className="text-gray-300 text-sm">클릭하거나 사진을 드래그해서 올려놓기</p>
-                  </div>
-                )}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleImageSelect}
-                  className="hidden"
-                />
-              </div>
-
-              {/* Error Message */}
-              {error && (
-                <div className="bg-red-500/20 border border-red-500 text-red-200 px-4 py-3 rounded-lg mb-6">
-                  {error}
-                </div>
-              )}
-
-              {/* Action Buttons */}
-              <div className="flex gap-4">
-                <button
-                  onClick={handleAnalyze}
-                  disabled={!image || isLoading}
-                  className="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-lg transition"
-                >
-                  {isLoading ? (
-                    <>
-                      <span className="inline-block animate-spin mr-2">🔄</span>
-                      분석 중...
-                    </>
-                  ) : (
-                    '관상 분석하기'
-                  )}
-                </button>
-              </div>
-            </>
+          {view.phase === 'result' ? (
+            <div className="space-y-6">
+              <ResultView preview={preview} result={view.result} />
+              <button
+                onClick={handleReset}
+                className="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg transition"
+              >
+                다시 분석하기
+              </button>
+            </div>
+          ) : view.phase === 'error' && view.code === 'NO_FACE' ? (
+            <NoFaceNotice message={view.message} onRetry={handleBackToUpload} />
           ) : (
             <>
-              {/* Result Section */}
-              <div className="space-y-6">
-                {/* Preview */}
-                <div>
-                  <img
-                    src={preview!}
-                    alt="Analyzed"
-                    className="w-full h-auto rounded-lg object-cover max-h-64"
-                  />
+              <UploadPanel
+                preview={preview}
+                isLoading={isLoading}
+                fileInputRef={fileInputRef}
+                onFileChange={handleFileChange}
+                onClearPreview={handleClearPreview}
+                onAnalyze={handleAnalyze}
+              />
+              {view.phase === 'error' && (
+                <div className="mt-6">
+                  <ErrorBanner message={view.message} onRetry={handleBackToUpload} />
                 </div>
-
-                {/* Results */}
-                <div className="space-y-4">
-                  <div className="bg-purple-500/20 border border-purple-400 rounded-lg p-4">
-                    <h3 className="text-purple-200 font-bold mb-2">✨ 얼굴 특징</h3>
-                    <p className="text-white text-sm leading-relaxed whitespace-pre-wrap">{result.features}</p>
-                  </div>
-
-                  <div className="bg-blue-500/20 border border-blue-400 rounded-lg p-4">
-                    <h3 className="text-blue-200 font-bold mb-2">💫 성격 해석</h3>
-                    <p className="text-white text-sm leading-relaxed whitespace-pre-wrap">{result.personality}</p>
-                  </div>
-
-                  <div className="bg-pink-500/20 border border-pink-400 rounded-lg p-4">
-                    <h3 className="text-pink-200 font-bold mb-2">🎯 사주와의 연관</h3>
-                    <p className="text-white text-sm leading-relaxed whitespace-pre-wrap">{result.fortune}</p>
-                  </div>
-                </div>
-
-                {/* Reset Button */}
-                <button
-                  onClick={handleReset}
-                  className="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg transition"
-                >
-                  다시 분석하기
-                </button>
-              </div>
+              )}
             </>
           )}
         </div>
