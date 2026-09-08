@@ -6,6 +6,15 @@
 
 데이터 타입은 전부 `lib/types.ts`에 이미 있다 (수정 금지, import 해서 쓴다).
 
+## ★ 임포트 규칙 (어기면 테스트가 안 돈다)
+
+- **`lib/` 안의 모듈끼리는 상대 경로로 import 한다** — `./types`, `./parse`. `@/lib/...` 금지.
+  이유: 테스트는 `tsc`로 CommonJS로 컴파일해 `node --test`로 돈다. `tsc`는 `paths` 별칭을
+  출력에 다시 쓰지 않으므로, 별칭을 쓰면 컴파일된 JS가 `require("@/lib/types")`가 되어
+  런타임에 모듈을 못 찾는다.
+- **`app/` 안에서는 `@/lib/types` 별칭을 써도 된다** — Next.js 번들러가 처리하고,
+  `app/`은 테스트 컴파일 대상이 아니다.
+
 ---
 
 ## `lib/prompt.ts`
