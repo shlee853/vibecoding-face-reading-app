@@ -1,0 +1,27 @@
+{
+  "note": "S2 병렬 조각 3개만 검사한다. S1(test-author)은 순차라 대상이 아니다.",
+  "pieces": [
+    {
+      "id": "A-backend",
+      "writes": [
+        "lib/prompt.ts",
+        "lib/parse.ts",
+        "lib/storage.ts"
+      ]
+    },
+    {
+      "id": "B-result-view",
+      "writes": [
+        "app/components/ResultView.tsx"
+      ]
+    },
+    {
+      "id": "C-input-capture",
+      "writes": [
+        "app/components/CameraCapture.tsx",
+        "app/components/UploadPanel.tsx",
+        "app/page.tsx"
+      ]
+    }
+  ]
+}

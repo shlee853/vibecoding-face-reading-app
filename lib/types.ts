@@ -41,11 +41,41 @@ export interface SajuReading {
   advice: string;
 }
 
+/**
+ * 어울리는 이성 유형.
+ * traits는 **성향·분위기**를 적는다 — 외모의 우열을 매기는 표현은 넣지 않는다.
+ */
+export interface IdealPartner {
+  /** 한 줄 유형 요약 (예: "느긋하게 들어주는 사람") */
+  type: string;
+  /** 잘 맞는 성향·분위기 */
+  traits: string[];
+  /** 관상적으로 그렇게 보는 근거 */
+  reason: string;
+}
+
+/** 애정운 */
+export interface Romance {
+  /** 연애할 때 드러나는 성향 */
+  tendency: string;
+  /** 애정운의 흐름 */
+  fortune: string;
+  /** 주의할 점 */
+  caution: string;
+}
+
+/** 애정 파트 — 어울리는 상대와 애정운 */
+export interface LoveReading {
+  idealPartner: IdealPartner;
+  romance: Romance;
+}
+
 /** 분석 성공 결과 */
 export interface FaceReading {
   features: FaceFeatures;
   personality: Personality;
   saju: SajuReading;
+  love: LoveReading;
 }
 
 /** 오류 분류. 새 코드를 추가하면 ERROR_CODES에도 반드시 추가한다. */
@@ -96,6 +126,29 @@ export type ParseResult =
 export type ImageValidation =
   | { ok: true; mimeType: string; base64: string }
   | { ok: false; code: Extract<AnalyzeErrorCode, 'NO_IMAGE' | 'BAD_IMAGE_FORMAT' | 'IMAGE_TOO_LARGE'> };
+
+/** 마지막 결과를 브라우저에 임시 저장할 때 쓰는 키 */
+export const SAVED_RESULT_KEY = 'face-reading:last-result';
+
+/** 저장 포맷 버전. 올리면 이전 저장분은 버린다. */
+export const SAVED_RESULT_VERSION = 1;
+
+/**
+ * 미리보기 이미지를 함께 저장할 수 있는 최대 크기(1MB).
+ * localStorage는 대개 5MB 남짓이고 원본 사진은 4MB까지 허용되므로,
+ * 큰 사진은 이미지를 빼고 해석 결과만 저장한다.
+ */
+export const MAX_SAVED_PREVIEW_BYTES = 1024 * 1024;
+
+/** localStorage에 담기는 값 */
+export interface SavedResult {
+  version: number;
+  /** 저장 시각 (epoch ms) */
+  savedAt: number;
+  /** 용량이 커서 뺐으면 null */
+  preview: string | null;
+  result: FaceReading;
+}
 
 /**
  * 분석에 쓰는 업스트림 클라이언트의 최소 인터페이스.
