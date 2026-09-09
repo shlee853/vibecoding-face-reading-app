@@ -137,6 +137,42 @@ export function parseAnalysis(raw: string): ParseResult {
     return { kind: 'unparsable', raw };
   }
 
+  const love = obj.love as Record<string, unknown> | undefined;
+
+  if (!love || typeof love !== 'object') {
+    return { kind: 'unparsable', raw };
+  }
+
+  const idealPartner = love.idealPartner as Record<string, unknown> | undefined;
+  const romance = love.romance as Record<string, unknown> | undefined;
+
+  if (!idealPartner || typeof idealPartner !== 'object') {
+    return { kind: 'unparsable', raw };
+  }
+
+  const traits = normalizeStringArray(idealPartner.traits);
+
+  if (
+    !isNonEmptyString(idealPartner.type) ||
+    !traits ||
+    traits.length === 0 ||
+    !isNonEmptyString(idealPartner.reason)
+  ) {
+    return { kind: 'unparsable', raw };
+  }
+
+  if (!romance || typeof romance !== 'object') {
+    return { kind: 'unparsable', raw };
+  }
+
+  if (
+    !isNonEmptyString(romance.tendency) ||
+    !isNonEmptyString(romance.fortune) ||
+    !isNonEmptyString(romance.caution)
+  ) {
+    return { kind: 'unparsable', raw };
+  }
+
   const reading: FaceReading = {
     features: {
       forehead: features.forehead as string,
@@ -156,6 +192,18 @@ export function parseAnalysis(raw: string): ParseResult {
       elementReason: saju.elementReason as string,
       fortune: saju.fortune as string,
       advice: saju.advice as string,
+    },
+    love: {
+      idealPartner: {
+        type: idealPartner.type as string,
+        traits,
+        reason: idealPartner.reason as string,
+      },
+      romance: {
+        tendency: romance.tendency as string,
+        fortune: romance.fortune as string,
+        caution: romance.caution as string,
+      },
     },
   };
 

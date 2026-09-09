@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ALLOWED_MIME_TYPES,
   MAX_IMAGE_BYTES,
@@ -8,6 +8,7 @@ import {
   type AnalyzeResponseBody,
   type FaceReading,
 } from '@/lib/types';
+import { saveResult, loadResult, clearResult } from '@/lib/storage';
 import UploadPanel from './components/UploadPanel';
 import ResultView from './components/ResultView';
 import ErrorBanner from './components/ErrorBanner';
@@ -17,13 +18,23 @@ import NoFaceNotice from './components/NoFaceNotice';
 type View =
   | { phase: 'idle' }
   | { phase: 'loading' }
-  | { phase: 'result'; result: FaceReading }
+  | { phase: 'result'; result: FaceReading; restored?: boolean }
   | { phase: 'error'; code: AnalyzeErrorCode; message: string };
 
 export default function Home() {
   const [preview, setPreview] = useState<string | null>(null);
   const [view, setView] = useState<View>({ phase: 'idle' });
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /** 마운트 시 저장된 결과가 있으면 복원한다. 렌더 중이 아닌 effect 안에서만 window를 만진다 (E5). */
+  useEffect(() => {
+    const saved = loadResult(window.localStorage);
+    if (saved) {
+      setPreview(saved.preview);
+      setView({ phase: 'result', result: saved.result, restored: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -62,6 +73,12 @@ export default function Home() {
     }
   };
 
+  /** 카메라 촬영 결과를 기존 preview와 동일하게 취급한다. */
+  const handleCameraCapture = (dataUrl: string) => {
+    setPreview(dataUrl);
+    setView({ phase: 'idle' });
+  };
+
   const handleAnalyze = async () => {
     if (!preview) return;
 
@@ -78,6 +95,7 @@ export default function Home() {
 
       if (body.ok) {
         setView({ phase: 'result', result: body.result });
+        saveResult(window.localStorage, body.result, preview);
       } else {
         setView({ phase: 'error', code: body.code, message: body.message });
       }
@@ -95,13 +113,14 @@ export default function Home() {
     setView({ phase: 'idle' });
   };
 
-  /** 결과 화면에서 완전히 초기화한다 (B6): 미리보기·결과·오류를 모두 지운다. */
+  /** 결과 화면에서 완전히 초기화한다 (B6): 미리보기·결과·오류를 모두 지운다. 저장된 결과도 함께 지운다. */
   const handleReset = () => {
     setPreview(null);
     setView({ phase: 'idle' });
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+    clearResult(window.localStorage);
   };
 
   const isLoading = view.phase === 'loading';
@@ -119,6 +138,9 @@ export default function Home() {
         <div className="bg-white/10 backdrop-blur-md rounded-2xl p-8 border border-white/20">
           {view.phase === 'result' ? (
             <div className="space-y-6">
+              {view.restored && (
+                <p className="text-center text-gray-400 text-xs">이전에 본 결과입니다</p>
+              )}
               <ResultView preview={preview} result={view.result} />
               <button
                 onClick={handleReset}
@@ -138,6 +160,7 @@ export default function Home() {
                 onFileChange={handleFileChange}
                 onClearPreview={handleClearPreview}
                 onAnalyze={handleAnalyze}
+                onCameraCapture={handleCameraCapture}
               />
               {view.phase === 'error' && (
                 <div className="mt-6">

@@ -89,6 +89,45 @@ export default function ResultView({ preview, result }: ResultViewProps) {
             <p className="text-white text-sm leading-relaxed">{result.saju.advice}</p>
           </div>
         </div>
+
+        {/* 어울리는 이성 */}
+        <div className="bg-rose-500/20 border border-rose-400 rounded-lg p-4">
+          <h3 className="text-rose-200 font-bold mb-3">💘 어울리는 이성</h3>
+          <p className="text-white text-base font-bold leading-relaxed mb-3">
+            {result.love.idealPartner.type}
+          </p>
+          <div className="mb-3">
+            <p className="text-rose-200 text-xs font-semibold mb-1">잘 맞는 성향</p>
+            <ul className="list-disc list-inside space-y-1">
+              {result.love.idealPartner.traits.map((item, i) => (
+                <li key={i} className="text-white text-sm">
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <p className="text-rose-200 text-xs font-semibold mb-1">근거</p>
+            <p className="text-white text-sm leading-relaxed">{result.love.idealPartner.reason}</p>
+          </div>
+        </div>
+
+        {/* 애정운 */}
+        <div className="bg-amber-500/20 border border-amber-400 rounded-lg p-4">
+          <h3 className="text-amber-200 font-bold mb-3">🌹 애정운</h3>
+          <div className="mb-3">
+            <p className="text-amber-200 text-xs font-semibold mb-1">연애 성향</p>
+            <p className="text-white text-sm leading-relaxed">{result.love.romance.tendency}</p>
+          </div>
+          <div className="mb-3">
+            <p className="text-amber-200 text-xs font-semibold mb-1">애정운 흐름</p>
+            <p className="text-white text-sm leading-relaxed">{result.love.romance.fortune}</p>
+          </div>
+          <div>
+            <p className="text-amber-200 text-xs font-semibold mb-1">주의할 점</p>
+            <p className="text-white text-sm leading-relaxed">{result.love.romance.caution}</p>
+          </div>
+        </div>
       </div>
     </div>
   );

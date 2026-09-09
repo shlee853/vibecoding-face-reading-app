@@ -1,0 +1,26 @@
+{
+  "_note": "오케스트레이터의 통합 검증 전용. app/ 컴포넌트를 CJS로 컴파일해 실제 렌더한다.",
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "../../../.test-out/render",
+    "rootDir": "../../..",
+    "noEmit": false,
+    "incremental": false,
+    "types": ["node", "react"],
+    "lib": ["es2022", "dom"],
+    "baseUrl": "../../..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../../../app/page.tsx",
+    "../../../app/components/**/*.tsx",
+    "../../../lib/types.ts",
+    "../../../lib/storage.ts"
+  ]
+}
