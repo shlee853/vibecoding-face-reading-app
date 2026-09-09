@@ -1,6 +1,6 @@
 /**
  * lib/parse.ts — extractJsonBlock() / parseAnalysis() 계약 검증.
- * 대응 수락 기준: A2, A4 (+ extractJsonBlock 자체 회수 능력)
+ * 대응 수락 기준: A2(prompt), A4, A5(회귀) — 스프린트 3에서 love 필드 판정을 추가했다.
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,6 +8,8 @@ import { extractJsonBlock, parseAnalysis } from '../lib/parse';
 import { ELEMENTS } from '../lib/types';
 
 // ---- 현실적인 정상 응답 샘플 ------------------------------------------------
+// 스프린트 3: love(idealPartner/romance) 필드를 추가했다. traits/tendency/fortune/caution은
+// 외모의 우열이 아니라 성향·분위기로 기술한다 (기획 취지 준수).
 
 const VALID_READING = {
   faceDetected: true,
@@ -29,6 +31,18 @@ const VALID_READING = {
     elementReason: '이마와 눈매의 기운이 나무의 상승하는 기운과 닮아 목의 기운이 강합니다.',
     fortune: '올해는 새로운 시작과 성장의 기운이 강한 해입니다.',
     advice: '무리한 확장보다는 기초를 다지는 데 집중하세요.',
+  },
+  love: {
+    idealPartner: {
+      type: '차분하게 대화를 이끌어가는 사람',
+      traits: ['배려심이 많음', '유머 감각이 있음'],
+      reason: '눈매가 부드럽고 입꼬리가 편안하게 올라가 있어 정서적으로 안정된 상대와 잘 맞습니다.',
+    },
+    romance: {
+      tendency: '표현이 서툴지만 한 번 마음을 열면 오래도록 다정하게 챙기는 편입니다.',
+      fortune: '하반기에 새로운 인연이 자연스럽게 다가올 기운이 보입니다.',
+      caution: '상대의 작은 신호를 놓치지 않도록 평소보다 관심을 기울이세요.',
+    },
   },
 };
 
@@ -89,9 +103,9 @@ describe('extractJsonBlock', () => {
   });
 });
 
-// ---- parseAnalysis: A4 5가지 입력 분기 --------------------------------------
+// ---- parseAnalysis: 5가지 입력 분기 (회귀) --------------------------------------
 
-describe('parseAnalysis — 입력 형태별 분기 (A4)', () => {
+describe('parseAnalysis — 입력 형태별 분기 (회귀)', () => {
   test('(1) ```json 펜스 정상 입력 → ok', () => {
     const result = parseAnalysis(fenced(validJson()));
     assert.equal(result.kind, 'ok');
@@ -137,9 +151,9 @@ describe('parseAnalysis — 입력 형태별 분기 (A4)', () => {
   });
 });
 
-// ---- parseAnalysis: A2 값 채움 검증 (필드 존재가 아니라 값까지) ----------------
+// ---- parseAnalysis: saju 값 채움 검증 (회귀) -----------------------------------
 
-describe('parseAnalysis — saju 필드 값 검증 (A2)', () => {
+describe('parseAnalysis — saju 필드 값 검증 (회귀)', () => {
   test('정상 샘플 파싱 시 saju의 네 필드가 입력값 그대로, 비어있지 않게 채워진다', () => {
     const result = parseAnalysis(validJson());
     assert.equal(result.kind, 'ok');
@@ -167,9 +181,9 @@ describe('parseAnalysis — saju 필드 값 검증 (A2)', () => {
   });
 });
 
-// ---- parseAnalysis: 관용성(레니언시) 규칙 -----------------------------------
+// ---- parseAnalysis: 관용성(레니언시) 규칙 (회귀) -----------------------------------
 
-describe('parseAnalysis — 관용적 정규화 규칙', () => {
+describe('parseAnalysis — 관용적 정규화 규칙 (회귀)', () => {
   test('strengths가 배열이 아니라 문자열 하나로 오면 길이 1인 배열로 감싼다', () => {
     const obj = {
       ...VALID_READING,
@@ -202,9 +216,9 @@ describe('parseAnalysis — 관용적 정규화 규칙', () => {
   });
 });
 
-// ---- parseAnalysis: 유효성 실패 → unparsable --------------------------------
+// ---- parseAnalysis: 불완전한 구조는 unparsable로 판정한다 (회귀) --------------------------------
 
-describe('parseAnalysis — 불완전한 구조는 unparsable로 판정한다', () => {
+describe('parseAnalysis — 불완전한 구조는 unparsable로 판정한다 (회귀)', () => {
   test('features에 5개 키 중 하나(chin)가 빠지면 unparsable', () => {
     const broken: any = JSON.parse(JSON.stringify(VALID_READING));
     delete broken.features.chin;
@@ -236,6 +250,105 @@ describe('parseAnalysis — 불완전한 구조는 unparsable로 판정한다', 
   test('saju.element가 오행 5종 밖의 값이면 unparsable', () => {
     const broken: any = JSON.parse(JSON.stringify(VALID_READING));
     broken.saju.element = '불가능한값';
+    const result = parseAnalysis(JSON.stringify(broken));
+    assert.equal(result.kind, 'unparsable');
+  });
+});
+
+// ---- parseAnalysis: 애정 필드 판정 (신규, A4) ------------------------------------
+// 스프린트 3에서 추가된 love(idealPartner/romance) 필드가 kind:'ok' 조건에 들어간다.
+
+describe('parseAnalysis — 애정(love) 필드 판정 (A4)', () => {
+  test('(1) love가 온전한 정상 입력 → ok, 애정 값이 입력과 정확히 일치한다', () => {
+    const result = parseAnalysis(validJson());
+    assert.equal(result.kind, 'ok');
+    if (result.kind !== 'ok') return;
+
+    const { love } = result.reading;
+    assert.equal(love.idealPartner.type, VALID_READING.love.idealPartner.type);
+    assert.equal(love.idealPartner.reason, VALID_READING.love.idealPartner.reason);
+    assert.deepEqual(love.idealPartner.traits, VALID_READING.love.idealPartner.traits);
+    assert.equal(love.romance.tendency, VALID_READING.love.romance.tendency);
+    assert.equal(love.romance.fortune, VALID_READING.love.romance.fortune);
+    assert.equal(love.romance.caution, VALID_READING.love.romance.caution);
+
+    // 필드 존재만으로는 빈 문자열 충족도 통과하므로 비어있지 않음까지 확인한다.
+    assert.ok(love.idealPartner.type.trim().length > 0);
+    assert.ok(love.idealPartner.reason.trim().length > 0);
+    assert.ok(love.idealPartner.traits.length > 0);
+    assert.ok(love.romance.tendency.trim().length > 0);
+    assert.ok(love.romance.fortune.trim().length > 0);
+    assert.ok(love.romance.caution.trim().length > 0);
+  });
+
+  test('(2) love 필드가 통째로 누락되면 unparsable', () => {
+    const broken: any = JSON.parse(JSON.stringify(VALID_READING));
+    delete broken.love;
+    const result = parseAnalysis(JSON.stringify(broken));
+    assert.equal(result.kind, 'unparsable');
+  });
+
+  test('(3) love.romance만 누락되면 unparsable', () => {
+    const broken: any = JSON.parse(JSON.stringify(VALID_READING));
+    delete broken.love.romance;
+    const result = parseAnalysis(JSON.stringify(broken));
+    assert.equal(result.kind, 'unparsable');
+  });
+
+  test('(3-변형) love.idealPartner만 누락되면 unparsable', () => {
+    const broken: any = JSON.parse(JSON.stringify(VALID_READING));
+    delete broken.love.idealPartner;
+    const result = parseAnalysis(JSON.stringify(broken));
+    assert.equal(result.kind, 'unparsable');
+  });
+
+  test('(4) traits가 문자열 하나로 오면 ok이고, 길이 1인 배열로 감싸진다', () => {
+    const obj: any = JSON.parse(JSON.stringify(VALID_READING));
+    obj.love.idealPartner.traits = '배려심이 많음';
+    const result = parseAnalysis(JSON.stringify(obj));
+    assert.equal(result.kind, 'ok');
+    if (result.kind !== 'ok') return;
+    assert.deepEqual(result.reading.love.idealPartner.traits, ['배려심이 많음']);
+  });
+
+  test('traits가 빈 배열이면 unparsable', () => {
+    const broken: any = JSON.parse(JSON.stringify(VALID_READING));
+    broken.love.idealPartner.traits = [];
+    const result = parseAnalysis(JSON.stringify(broken));
+    assert.equal(result.kind, 'unparsable');
+  });
+
+  test('idealPartner.type이 빈 문자열이면 unparsable', () => {
+    const broken: any = JSON.parse(JSON.stringify(VALID_READING));
+    broken.love.idealPartner.type = '';
+    const result = parseAnalysis(JSON.stringify(broken));
+    assert.equal(result.kind, 'unparsable');
+  });
+
+  test('idealPartner.reason이 빈 문자열이면 unparsable', () => {
+    const broken: any = JSON.parse(JSON.stringify(VALID_READING));
+    broken.love.idealPartner.reason = '   ';
+    const result = parseAnalysis(JSON.stringify(broken));
+    assert.equal(result.kind, 'unparsable');
+  });
+
+  test('romance.tendency가 빈 문자열이면 unparsable', () => {
+    const broken: any = JSON.parse(JSON.stringify(VALID_READING));
+    broken.love.romance.tendency = '';
+    const result = parseAnalysis(JSON.stringify(broken));
+    assert.equal(result.kind, 'unparsable');
+  });
+
+  test('romance.fortune이 빈 문자열이면 unparsable', () => {
+    const broken: any = JSON.parse(JSON.stringify(VALID_READING));
+    broken.love.romance.fortune = '';
+    const result = parseAnalysis(JSON.stringify(broken));
+    assert.equal(result.kind, 'unparsable');
+  });
+
+  test('romance.caution이 빈 문자열이면 unparsable', () => {
+    const broken: any = JSON.parse(JSON.stringify(VALID_READING));
+    broken.love.romance.caution = '';
     const result = parseAnalysis(JSON.stringify(broken));
     assert.equal(result.kind, 'unparsable');
   });
