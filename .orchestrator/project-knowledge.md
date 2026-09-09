@@ -26,6 +26,18 @@
 (`jsdom` 미설치, 설치도 차단).
 새 UI 주행은 이 스크립트를 복사해 픽스처만 바꾸면 된다.
 
+### `next build`를 돌렸으면 `.next`를 반드시 지워라 ★
+검증 목적으로 `npx next build`를 돌리면 `.next/`가 **프로덕션** 산출물로 덮인다.
+그 뒤 사용자가 `next dev`를 띄우면 dev 런타임과 프로덕션 페이지 청크가 섞여
+`Cannot find module './NNN.js'`로 죽는다 (20260909-065503 주행 후 실제 발생).
+
+증상 구분법: `.next/server/app/page.js`와 `.next/server/webpack-runtime.js`의
+**타임스탬프가 다르면** 섞인 상태다.
+
+**규칙**: 주행 중 `next build`를 돌렸다면 종료 전에 `rm -rf .next`를 한다.
+빌드 성공 여부만 알면 되고 산출물은 필요 없기 때문이다.
+`.next`는 gitignore 대상이고 전부 재생성되므로 지워도 잃는 것이 없다.
+
 ### 실제 Gemini API를 호출하면 과금된다
 `.env.local`에 실제 키가 들어 있다. **안전경계 4에 걸리므로 호출하지 마라.**
 `lib/gemini.ts`의 `analyzeFace`는 `VisionClient`를 주입받게 설계돼 있어 가짜로 대체 가능하다.
