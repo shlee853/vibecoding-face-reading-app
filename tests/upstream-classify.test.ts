@@ -74,6 +74,43 @@ describe('classifyUpstreamError — 재시도해도 소용없는 오류를 구�
   });
 });
 
+describe('classifyUpstreamError — 서버가 외부에 못 나가는 경우', () => {
+  // 실제로 겪은 사례: 샌드박스 안에서 서버를 띄웠더니 DNS가 막혀 모든 분석이 실패했다.
+  // 이때 "잠시 후 다시 시도"라고 안내하면 사용자는 영영 해결하지 못한다.
+  test('SDK의 "fetch failed"는 NETWORK_UNAVAILABLE', () => {
+    assert.equal(
+      classifyUpstreamError(
+        sdkError(
+          '[GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1/models/x:generateContent: fetch failed'
+        )
+      ),
+      'NETWORK_UNAVAILABLE'
+    );
+  });
+
+  test('cause에 담긴 DNS 실패도 잡는다', () => {
+    const e = new Error('fetch failed') as Error & { cause?: unknown };
+    e.cause = { code: 'ENOTFOUND', message: 'getaddrinfo ENOTFOUND generativelanguage.googleapis.com' };
+    assert.equal(classifyUpstreamError(e), 'NETWORK_UNAVAILABLE');
+  });
+
+  test('연결 거부도 NETWORK_UNAVAILABLE', () => {
+    const e = new Error('fetch failed') as Error & { cause?: unknown };
+    e.cause = { code: 'ECONNREFUSED' };
+    assert.equal(classifyUpstreamError(e), 'NETWORK_UNAVAILABLE');
+  });
+
+  test('네트워크 불가는 재시도하지 않는다 — 다시 눌러도 해결되지 않는다', () => {
+    assert.equal(isRetryableCode('NETWORK_UNAVAILABLE'), false);
+  });
+
+  test('안내 문구가 사진 문제가 아님을 밝힌다', () => {
+    const msg = messageForCode('NETWORK_UNAVAILABLE');
+    assert.ok(/네트워크|연결/.test(msg), '네트워크 문제임을 알려야 한다');
+    assert.ok(!/잠시 후 다시 시도/.test(msg), '재시도를 권하면 안 된다 — 재시도로 풀리지 않는다');
+  });
+});
+
 describe('classifyUpstreamError — 무엇이 들어와도 던지지 않는다', () => {
   for (const value of [null, undefined, 'string', 42, {}, []]) {
     test(`${JSON.stringify(value) ?? String(value)} → UPSTREAM_FAILED (예외 없음)`, () => {

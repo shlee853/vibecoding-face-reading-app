@@ -17,6 +17,8 @@ const MESSAGES: Record<AnalyzeErrorCode, string> = {
     'AI 서버가 혼잡합니다. 잠시 후 다시 시도해 주세요.',
   SAFETY_BLOCKED:
     '이 사진으로는 분석 결과를 만들지 못했습니다. 얼굴이 정면으로 또렷하게 나온 다른 사진으로 시도해 주세요.',
+  NETWORK_UNAVAILABLE:
+    '서버가 AI 분석 서비스에 연결하지 못했습니다. 사진 문제가 아니라 서버의 네트워크 설정 문제입니다.',
 };
 
 const STATUSES: Record<AnalyzeErrorCode, number> = {
@@ -32,6 +34,7 @@ const STATUSES: Record<AnalyzeErrorCode, number> = {
   RATE_LIMITED: 429,
   UPSTREAM_BUSY: 503,
   SAFETY_BLOCKED: 422,
+  NETWORK_UNAVAILABLE: 503,
 };
 
 export function messageForCode(code: AnalyzeErrorCode): string {
@@ -57,6 +60,25 @@ export function classifyUpstreamError(e: unknown): AnalyzeErrorCode {
   if (name === 'AbortError' || name === 'TimeoutError') return 'TIMEOUT';
 
   if (/timeout|timed out|ETIMEDOUT/i.test(message)) return 'TIMEOUT';
+
+  // Node의 fetch는 DNS·연결 실패를 "fetch failed"로 뭉뚱그리고 실제 사유를 cause에 담는다.
+  // 이걸 UPSTREAM_FAILED로 두면 "잠시 후 다시 시도"라는 틀린 안내를 하게 된다 —
+  // 서버가 외부에 못 나가는 상황은 사용자가 아무리 다시 눌러도 해결되지 않는다.
+  const causeMessage = (e as { cause?: { message?: unknown } } | null | undefined)?.cause?.message;
+  const causeCode = (e as { cause?: { code?: unknown } } | null | undefined)?.cause?.code;
+  const networkHaystack = [
+    message,
+    typeof causeMessage === 'string' ? causeMessage : '',
+    typeof causeCode === 'string' ? causeCode : '',
+  ].join(' ');
+
+  if (
+    /fetch failed|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ENETUNREACH|getaddrinfo|ERR_TLS|self[- ]signed certificate/i.test(
+      networkHaystack
+    )
+  ) {
+    return 'NETWORK_UNAVAILABLE';
+  }
 
   // API 키 문제는 재시도해도 소용없으므로 먼저 걸러낸다.
   // 400은 키 문제 외의 원인도 많아 포함하지 않는다 — 엉뚱하게 "키가 잘못됐다"고 안내하게 된다.

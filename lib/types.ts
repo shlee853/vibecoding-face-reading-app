@@ -95,6 +95,11 @@ export const ERROR_CODES = [
   'UPSTREAM_BUSY',
   /** 안전 필터가 응답을 막음 — 같은 사진으로 재시도해도 대개 또 막힌다 */
   'SAFETY_BLOCKED',
+  /**
+   * 서버가 AI 서비스에 네트워크로 닿지 못함(DNS 실패, 연결 거부, 방화벽).
+   * 사용자가 고칠 수 있는 것이 아니라 **서버 환경 문제**다 — 재시도해도 소용없다.
+   */
+  'NETWORK_UNAVAILABLE',
 ] as const;
 export type AnalyzeErrorCode = (typeof ERROR_CODES)[number];
 

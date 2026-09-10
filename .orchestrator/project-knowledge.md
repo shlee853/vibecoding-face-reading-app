@@ -49,6 +49,29 @@ node -e "require('net').createServer().listen(3111,'127.0.0.1',function(){consol
 빌드 성공 여부만 알면 되고 산출물은 필요 없기 때문이다.
 `.next`는 gitignore 대상이고 전부 재생성되므로 지워도 잃는 것이 없다.
 
+### ★★ 샌드박스 안에서 띄운 dev 서버는 Gemini에 닿지 못한다 — 사용자에게 안내하지 마라
+포트 바인딩은 열렸지만 **네트워크 egress는 여전히 필터링된다.**
+`generativelanguage.googleapis.com`은 DNS 조회부터 실패한다(`ENOTFOUND`, 2026-09-11 확인).
+
+그래서 오케스트레이터가 띄운 서버로 분석을 실행하면 **항상** 실패한다:
+```
+[GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/... : fetch failed
+```
+
+**실제로 저지른 실수**: 검증용으로 띄운 서버(3300)를 사용자에게 "여기서 테스트하세요"라고
+안내했다. 사용자는 자기 앱이 고장 난 줄 알고 한참을 헤맸다.
+
+**규칙**:
+- 오케스트레이터가 띄운 서버는 **UI 검증 전용**이다. 분석 실행은 못 한다.
+- **사용자에게 그 URL을 테스트용으로 주지 마라.** 실제 분석은 사용자가 자기 터미널에서
+  `npm run dev`로 띄운 서버에서만 된다 (샌드박스 밖이라 외부 통신이 된다).
+- 검증이 끝나면 서버를 끄고, 못 끄면 사용자에게 정리 방법을 알려라.
+  `lsof -ti:<포트> | xargs kill -9` (샌드박스가 kill을 막는 경우가 있다)
+
+### 모델명 `'gemini-3.6-flash'`는 유효하다 (확인됨)
+오래 "미확인 전제"로 남아 있었으나, 사용자 환경에서 `POST /api/analyze 200 in 15890ms`로
+실제 성공했다. 모델명 자체는 문제가 아니다.
+
 ### 실제 Gemini API를 호출하면 과금된다
 `.env.local`에 실제 키가 들어 있다. **안전경계 4에 걸리므로 호출하지 마라.**
 `lib/gemini.ts`의 `analyzeFace`는 `VisionClient`를 주입받게 설계돼 있어 가짜로 대체 가능하다.
