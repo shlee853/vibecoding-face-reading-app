@@ -89,6 +89,12 @@ export const ERROR_CODES = [
   'UPSTREAM_FAILED',
   'UNPARSABLE_RESPONSE',
   'TIMEOUT',
+  /** 요청량 초과(429) — 잠시 뒤 재시도하면 대개 풀린다 */
+  'RATE_LIMITED',
+  /** 업스트림 과부하(503) — 일시적 */
+  'UPSTREAM_BUSY',
+  /** 안전 필터가 응답을 막음 — 같은 사진으로 재시도해도 대개 또 막힌다 */
+  'SAFETY_BLOCKED',
 ] as const;
 export type AnalyzeErrorCode = (typeof ERROR_CODES)[number];
 

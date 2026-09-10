@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { captureVideoFrame } from './downscale';
 
 interface CameraCaptureProps {
   /** 촬영 성공 → 부모가 preview로 받는다 */
@@ -128,16 +129,13 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
 
   const handleCapture = () => {
     const video = videoRef.current;
-    if (!video || video.videoWidth === 0 || video.videoHeight === 0) return;
+    if (!video) return;
 
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    // 미리보기를 거울처럼 좌우 반전해 보여주므로, 찍히는 사진도 같게 만든다.
+    // 보이는 것과 찍히는 것이 다르면 사용자가 어색해한다.
+    // 동시에 긴 변을 1024px로 줄여 전송·분석 시간을 아낀다.
+    const dataUrl = captureVideoFrame(video, { mirror: true });
+    if (!dataUrl) return;
 
     stopStream();
     onCapture(dataUrl);
@@ -192,6 +190,8 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
           autoPlay
           playsInline
           muted
+          // 거울처럼 좌우를 뒤집어 보여준다. 촬영 결과도 같은 방향으로 저장된다.
+          style={{ transform: 'scaleX(-1)' }}
           className="w-full h-auto max-h-96 object-cover"
         />
         {status === 'loading' && (

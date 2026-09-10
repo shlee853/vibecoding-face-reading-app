@@ -13,6 +13,7 @@ import UploadPanel from './components/UploadPanel';
 import ResultView from './components/ResultView';
 import ErrorBanner from './components/ErrorBanner';
 import NoFaceNotice from './components/NoFaceNotice';
+import { fileToUploadDataUrl } from './components/downscale';
 
 /** 결과와 오류가 동시에 보이는 상태를 구조적으로 막기 위한 판별 유니온 */
 type View =
@@ -58,12 +59,20 @@ export default function Home() {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setPreview(reader.result as string);
-      setView({ phase: 'idle' });
-    };
-    reader.readAsDataURL(file);
+    // 전송 전에 긴 변을 1024px로 줄인다 — 분석 품질에는 충분하고 응답은 눈에 띄게 빨라진다.
+    // 축소에 실패하면 원본을 그대로 쓴다(헬퍼가 알아서 되돌린다).
+    fileToUploadDataUrl(file)
+      .then((dataUrl) => {
+        setPreview(dataUrl);
+        setView({ phase: 'idle' });
+      })
+      .catch(() => {
+        setView({
+          phase: 'error',
+          code: 'BAD_IMAGE_FORMAT',
+          message: '사진을 읽지 못했습니다. 다른 사진으로 다시 시도해 주세요.',
+        });
+      });
   };
 
   const handleClearPreview = () => {

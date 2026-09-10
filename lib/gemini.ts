@@ -5,23 +5,78 @@ import type { ParseResult, VisionClient } from './types';
 
 const MODEL_NAME = 'gemini-3.6-flash';
 
+/** 출력 상한. 넘으면 JSON이 잘려 파싱에 실패하므로 여유를 두되 무한정 두지 않는다. */
+const MAX_OUTPUT_TOKENS = 3072;
+
+/** 응답을 기다리는 상한. 이걸 넘기면 사용자를 무한정 붙잡아 두는 것보다 끊는 편이 낫다. */
+const REQUEST_TIMEOUT_MS = 25_000;
+
+class SafetyBlockedError extends Error {
+  constructor(detail: string) {
+    super(`Gemini blocked the response (${detail})`);
+    this.name = 'SafetyBlockedError';
+  }
+}
+
+class UpstreamTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`Gemini did not respond within ${ms}ms`);
+    this.name = 'TimeoutError';
+  }
+}
+
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new UpstreamTimeoutError(ms)), ms);
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer)) as Promise<T>;
+}
+
 /** 실제 Gemini API에 연결된 VisionClient를 만든다. 절대 테스트에서 호출하지 않는다. */
 export function createGeminiClient(apiKey: string): VisionClient {
   const genAI = new GoogleGenerativeAI(apiKey);
 
   return {
     async generate(input) {
-      const model = genAI.getGenerativeModel({ model: MODEL_NAME });
-      const response = await model.generateContent([
-        {
-          inlineData: {
-            data: input.base64,
-            mimeType: input.mimeType,
-          },
+      const model = genAI.getGenerativeModel({
+        model: MODEL_NAME,
+        generationConfig: {
+          maxOutputTokens: MAX_OUTPUT_TOKENS,
+          // 형식을 지켜야 하는 작업이라 창의성보다 일관성을 택한다.
+          temperature: 0.7,
         },
-        input.prompt,
-      ]);
-      return response.response.text();
+      });
+
+      const result = await withTimeout(
+        model.generateContent([
+          { inlineData: { data: input.base64, mimeType: input.mimeType } },
+          input.prompt,
+        ]),
+        REQUEST_TIMEOUT_MS
+      );
+
+      const response = result.response;
+
+      // 프롬프트 자체가 막힌 경우 — text()는 의미 없는 예외를 던지므로 먼저 걸러 이름을 붙인다.
+      const blockReason = response.promptFeedback?.blockReason;
+      if (blockReason) {
+        throw new SafetyBlockedError(`promptFeedback=${blockReason}`);
+      }
+
+      const finishReason = response.candidates?.[0]?.finishReason;
+      if (finishReason === 'SAFETY' || finishReason === 'RECITATION') {
+        throw new SafetyBlockedError(`finishReason=${finishReason}`);
+      }
+
+      const text = response.text();
+
+      // 출력 상한에 걸려 잘렸으면 JSON이 깨진다. 파서에게 넘기지 말고 여기서 드러낸다.
+      if (finishReason === 'MAX_TOKENS') {
+        throw new Error(`Gemini response truncated at maxOutputTokens (${MAX_OUTPUT_TOKENS})`);
+      }
+
+      return text;
     },
   };
 }

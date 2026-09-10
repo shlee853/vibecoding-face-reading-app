@@ -18,11 +18,11 @@ export function buildAnalysisPrompt(): string {
 {
   "faceDetected": true,
   "features": {
-    "forehead": "이마에 대한 구체적인 관상학적 소견 (한국어, 2문장 이상)",
-    "eyes": "눈에 대한 구체적인 관상학적 소견 (한국어, 2문장 이상)",
-    "nose": "코에 대한 구체적인 관상학적 소견 (한국어, 2문장 이상)",
-    "mouth": "입에 대한 구체적인 관상학적 소견 (한국어, 2문장 이상)",
-    "chin": "턱에 대한 구체적인 관상학적 소견 (한국어, 2문장 이상)"
+    "forehead": "이마에 대한 구체적인 관상학적 소견 (한국어, 1~2문장)",
+    "eyes": "눈에 대한 구체적인 관상학적 소견 (한국어, 1~2문장)",
+    "nose": "코에 대한 구체적인 관상학적 소견 (한국어, 1~2문장)",
+    "mouth": "입에 대한 구체적인 관상학적 소견 (한국어, 1~2문장)",
+    "chin": "턱에 대한 구체적인 관상학적 소견 (한국어, 1~2문장)"
   },
   "personality": {
     "summary": "관상 전체를 종합한 성격 요약 (한국어)",
@@ -51,6 +51,8 @@ export function buildAnalysisPrompt(): string {
 }
 
 ## 작성 지침
+- **분량을 지키세요.** 각 문자열 항목은 1~2문장이면 충분합니다. 길게 늘여 쓰지 마세요.
+  응답이 길수록 사용자가 오래 기다립니다.
 - features의 각 항목(forehead, eyes, nose, mouth, chin)은 실제 사진에서 관찰한 형태·비율을
   근거로 구체적으로 서술하세요. 두루뭉술한 일반론을 피하세요.
 - personality(summary, strengths, weaknesses, social)는 관상학 용어를 적절히 사용하되,
