@@ -43,4 +43,4 @@ echo
 echo "완료: $ARTIFACT ($SIZE)"
 echo
 echo "다음 단계 — 서버로 전송:"
-echo "  scp $ARTIFACT ubuntu@<서버IP>:~/"
+echo "  scp -i ~/.ssh/oracle_face_reading $ARTIFACT ubuntu@168.107.8.13:~/"

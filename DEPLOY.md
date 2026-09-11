@@ -10,6 +10,21 @@
 | 서버 IP | `168.107.8.13` |
 | 접속 도메인 | `168-107-8-13.sslip.io` (도메인 미보유 → sslip.io 사용) |
 | 최종 주소 | `https://168-107-8-13.sslip.io` |
+| OS | Ubuntu 24.04.3 LTS |
+| 아키텍처 | x86_64 (AMD), 2코어 |
+| 메모리 | **956Mi** — 서버에서 빌드 불가, 스왑 필요 |
+| 계정 | `ubuntu` |
+| Node | v22.22.0 (이미 설치됨 — 추가 설치 불필요) |
+| nginx | 미설치 |
+| Gemini 아웃바운드 | **정상** (키 없이 호출해 403 응답 = 네트워크 도달 확인) |
+
+### 이 서버에서 미리 확인한 것
+
+- **번들 이식성**: 개발 기계는 arm64(Mac), 서버는 x86_64입니다. 번들에 네이티브
+  바이너리(`.node`)가 하나도 없음을 확인했으므로 **그대로 올려도 동작합니다.**
+- **메모리 956Mi**: `next build`를 서버에서 돌리면 거의 확실히 OOM입니다.
+  이 가이드는 로컬에서 빌드해 산출물만 올리므로 문제없지만, **스왑은 잡아두는 것이 안전합니다**
+  (아래 3단계). 스왑이 없으면 부하가 몰릴 때 커널이 앱을 죽일 수 있습니다.
 
 > **sslip.io가 뭔가요**: IP를 그대로 이름으로 되돌려주는 공개 DNS입니다.
 > `168-107-8-13.sslip.io` 를 조회하면 `168.107.8.13` 이 나옵니다. 도메인을 사지 않고도
@@ -32,29 +47,23 @@ Oracle Always Free는 기간 제한 없이 VM을 주므로 적합합니다.
 
 ---
 
-## 0. 준비물
+## 0~1. 계정과 VM — ✅ 완료
 
-- Oracle Cloud 계정 (가입에 신용카드 확인이 필요하지만 Always Free는 청구되지 않습니다)
-- Gemini API 키
-- 로컬에 이 저장소
+Oracle 계정, Ubuntu 24.04 인스턴스(`168.107.8.13`), SSH 접속까지 모두 준비되어 있습니다.
+**2단계부터 시작하세요.**
 
----
-
-## 1. VM 만들기 (Oracle 콘솔)
+<details>
+<summary>새 서버에 처음부터 만들 때 (참고용)</summary>
 
 1. **Compute → Instances → Create instance**
-2. **Image**: Ubuntu 22.04 (또는 24.04)
-3. **Shape**: `VM.Standard.A1.Flex` (ARM) — **4 OCPU / 24GB** 로 잡으세요. Always Free 범위입니다.
-4. **SSH 키**: 공개키를 붙여넣거나 새로 생성해 개인키를 내려받으세요
-5. 생성 후 **Public IP** 를 적어둡니다
+2. **Image**: Ubuntu 22.04 또는 24.04
+3. **Shape**: `VM.Standard.A1.Flex` (ARM, 4 OCPU / 24GB)가 넉넉합니다.
+   `Out of host capacity` 가 뜨면 다른 가용 도메인·리전으로 바꾸거나 시간을 두고 재시도하세요.
+   AMD `E2.1.Micro`(1GB)로도 **이 가이드는 그대로 동작합니다** — 빌드를 서버에서 하지 않기 때문입니다.
+4. **SSH 키**: `ssh-keygen -t ed25519 -f ~/.ssh/oracle_face_reading` 로 만든 뒤
+   `.pub` 내용을 "Paste public keys"에 붙여넣으세요. **개인키는 오라클이 보관하지 않습니다.**
 
-> ### ⚠️ ARM 재고가 없다고 나오면
-> `Out of host capacity` 는 매우 흔합니다. 선택지:
-> - 다른 **가용 도메인(AD)** 이나 **리전**으로 바꿔 재시도
-> - 시간을 두고 반복 시도 (재고가 수시로 돌아옵니다)
-> - 대안으로 **AMD `VM.Standard.E2.1.Micro`** (1GB RAM) 사용 — 이 경우에도
->   **이 가이드는 그대로 동작합니다.** 빌드를 서버에서 하지 않고 로컬에서 만든 번들을
->   올리는 방식이라 1GB로도 충분합니다.
+</details>
 
 ## 2. 방화벽 열기 — ★ 두 군데를 모두 열어야 합니다
 
@@ -78,14 +87,27 @@ sudo netfilter-persistent save
 ## 3. 서버 초기 설정
 
 ```bash
-ssh ubuntu@168.107.8.13
+ssh -i ~/.ssh/oracle_face_reading ubuntu@168.107.8.13
 ```
 
+**Node는 이미 v22.22.0이 설치되어 있으므로 추가 설치가 필요 없습니다.** nginx만 설치합니다.
+
 ```bash
-sudo apt update && sudo apt install -y nginx
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
-node --version   # v20.x 가 나와야 합니다
+sudo apt update && sudo apt install -y nginx iptables-persistent
+```
+
+### 스왑 잡기 — 메모리가 956Mi뿐입니다
+
+스왑이 없으면 부하가 몰릴 때 커널이 앱 프로세스를 죽입니다(OOM kill). 2GB를 잡아둡니다.
+
+```bash
+free -h | grep -i swap          # 이미 있으면 이 단계는 건너뛰세요
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+free -h                          # Swap 줄에 2.0Gi가 보이면 성공
 ```
 
 ## 4. API 키 등록
@@ -115,8 +137,8 @@ GEMINI_API_KEY=여기에_실제_키
 `deploy-bundle.tar.gz` 가 생깁니다. 서버로 보냅니다:
 
 ```bash
-scp deploy-bundle.tar.gz ubuntu@168.107.8.13:~/
-scp deploy/face-reading.service deploy/nginx.conf ubuntu@168.107.8.13:~/
+scp -i ~/.ssh/oracle_face_reading deploy-bundle.tar.gz ubuntu@168.107.8.13:~/
+scp -i ~/.ssh/oracle_face_reading deploy/face-reading.service deploy/nginx.conf ubuntu@168.107.8.13:~/
 ```
 
 **서버에서** 펼칩니다:
@@ -191,7 +213,7 @@ curl -s https://168-107-8-13.sslip.io/api/health
 ```bash
 # 로컬
 ./scripts/build-deploy.sh
-scp deploy-bundle.tar.gz ubuntu@168.107.8.13:~/
+scp -i ~/.ssh/oracle_face_reading deploy-bundle.tar.gz ubuntu@168.107.8.13:~/
 
 # 서버
 rm -rf ~/face-reading && mkdir -p ~/face-reading
