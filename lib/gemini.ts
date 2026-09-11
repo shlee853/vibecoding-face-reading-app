@@ -1,12 +1,28 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { buildFacePrompt, buildFortunePrompt } from './prompt';
 import { extractJsonBlock, parseAnalysisValue } from './parse';
+import { classifyUpstreamError, isRetryableCode } from './errors';
+
+/** 어느 파트가 몇 번째 시도에서 왜 실패했는지 호출자가 기록할 수 있게 한다. */
+export interface AnalyzeOptions {
+  onAttemptError?: (info: { part: 'face' | 'fortune'; attempt: number; error: unknown }) => void;
+  /** 테스트가 실제 대기 없이 재시도 경로를 돌리기 위해 주입한다. */
+  sleep?: (ms: number) => Promise<void>;
+}
 import type { ParseResult, VisionClient } from './types';
 
 const MODEL_NAME = 'gemini-3.6-flash';
 
-/** 출력 상한. 넘으면 JSON이 잘려 파싱에 실패하므로 여유를 두되 무한정 두지 않는다. */
-const MAX_OUTPUT_TOKENS = 3072;
+/**
+ * 출력 상한.
+ *
+ * 분량을 크게 늘린 뒤 3072로는 한국어 응답이 잘릴 수 있게 됐다. 잘리면 JSON이 깨져
+ * 분석 전체가 실패한다. 상한을 올려도 **실제로 생성한 만큼만 과금**되므로 여유를 둔다.
+ */
+const MAX_OUTPUT_TOKENS = 8192;
+
+/** 한 파트가 일시적 오류로 실패했을 때 그 파트만 다시 시도하는 횟수 */
+const RETRY_PER_PART = 2;
 
 /**
  * 응답을 기다리는 상한.
@@ -115,23 +131,56 @@ function noFaceReason(value: unknown): string | null {
  */
 export async function analyzeFace(
   input: { base64: string; mimeType: string },
-  client: VisionClient
+  client: VisionClient,
+  options: AnalyzeOptions = {}
 ): Promise<{ parsed: ParseResult; elapsedMs: number }> {
   const startedAt = Date.now();
+  const sleep = options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
 
-  const [faceRaw, fortuneRaw] = await Promise.all([
-    client.generate({
-      base64: input.base64,
-      mimeType: input.mimeType,
-      prompt: buildFacePrompt(),
-    }),
-    client.generate({
-      base64: input.base64,
-      mimeType: input.mimeType,
-      prompt: buildFortunePrompt(),
-    }),
-  ]);
+  const parts = [
+    { name: 'face' as const, prompt: buildFacePrompt() },
+    { name: 'fortune' as const, prompt: buildFortunePrompt() },
+  ];
 
+  const call = (prompt: string) =>
+    client.generate({ base64: input.base64, mimeType: input.mimeType, prompt });
+
+  // 1차는 병렬 — 두 파트를 동시에 생성해 벽시계 시간을 아낀다.
+  const settled = await Promise.allSettled(parts.map((p) => call(p.prompt)));
+
+  const raws: (string | null)[] = settled.map((s) => (s.status === 'fulfilled' ? s.value : null));
+  const errors: unknown[] = settled.map((s) => (s.status === 'rejected' ? s.reason : null));
+
+  settled.forEach((s, i) => {
+    if (s.status === 'rejected') {
+      options.onAttemptError?.({ part: parts[i].name, attempt: 1, error: s.reason });
+    }
+  });
+
+  // 2차부터는 **실패한 파트만, 순차로** 다시 시도한다.
+  // 성공한 파트를 버리지 않으니 비용이 절반이고, 동시 요청을 줄이므로
+  // 업스트림 혼잡(503)이 원인이었던 경우 풀릴 가능성이 높아진다.
+  for (let i = 0; i < parts.length; i++) {
+    for (let attempt = 2; raws[i] === null && attempt <= RETRY_PER_PART + 1; attempt++) {
+      if (!isRetryableCode(classifyUpstreamError(errors[i]))) break;
+
+      // 혼잡·요청초과는 조금 더 기다려야 풀린다. 지터를 섞어 재시도가 겹치지 않게 한다.
+      await sleep(900 * (attempt - 1) + Math.floor(Math.random() * 400));
+
+      try {
+        raws[i] = await call(parts[i].prompt);
+        errors[i] = null;
+      } catch (e) {
+        errors[i] = e;
+        options.onAttemptError?.({ part: parts[i].name, attempt, error: e });
+      }
+    }
+  }
+
+  const failed = errors.find((e) => e !== null && e !== undefined);
+  if (failed !== undefined) throw failed;
+
+  const [faceRaw, fortuneRaw] = raws as [string, string];
   const elapsedMs = Date.now() - startedAt;
 
   const faceValue = extractJsonBlock(faceRaw);

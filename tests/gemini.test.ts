@@ -174,17 +174,96 @@ describe('analyzeFace — 관상·운세 두 파트를 병렬 호출한다', () 
     }
   });
 
-  test('한쪽 호출이 실패하면 전체가 실패한다 — 반쪽 결과를 내보내지 않는다', async () => {
-    let n = 0;
+  test('한쪽이 끝내 실패하면 전체가 실패한다 — 반쪽 결과를 내보내지 않는다', async () => {
+    // 운세 파트만 계속 실패시킨다. 재시도를 다 써도 회복하지 못하는 상황.
     const client = {
-      async generate() {
-        n += 1;
-        if (n === 2) throw new Error('두 번째 파트 실패');
+      async generate({ prompt }: { prompt: string }) {
+        if (prompt.includes('saju')) throw new Error('운세 파트 영구 실패');
         return VALID_READING_JSON;
       },
     };
 
-    await assert.rejects(() => analyzeFace(SAMPLE_INPUT, client), /두 번째 파트 실패/);
+    await assert.rejects(
+      () => analyzeFace(SAMPLE_INPUT, client, { sleep: async () => {} }),
+      /운세 파트 영구 실패/
+    );
+  });
+});
+
+describe('analyzeFace — 실패한 파트만 다시 시도한다', () => {
+  /** 특정 파트를 처음 n번만 실패시키는 가짜 클라이언트 */
+  function flakyClient(failingPart: 'face' | 'saju', failTimes: number) {
+    const attempts = { face: 0, fortune: 0 };
+    return {
+      attempts,
+      client: {
+        async generate({ prompt }: { prompt: string }) {
+          const isFortune = prompt.includes('saju');
+          const key = isFortune ? 'fortune' : 'face';
+          attempts[key] += 1;
+
+          const thisIsTheFailingPart = failingPart === 'saju' ? isFortune : !isFortune;
+          if (thisIsTheFailingPart && attempts[key] <= failTimes) {
+            const e = new Error('[503 Service Unavailable] The model is overloaded.');
+            throw e;
+          }
+          return VALID_READING_JSON;
+        },
+      },
+    };
+  }
+
+  test('일시적 혼잡(503)이면 그 파트만 다시 불러 회복한다', async () => {
+    const { client, attempts } = flakyClient('saju', 1);
+
+    const { parsed } = await analyzeFace(SAMPLE_INPUT, client, { sleep: async () => {} });
+
+    assert.equal(parsed.kind, 'ok', '재시도로 회복되어야 한다');
+    assert.equal(attempts.face, 1, '성공한 파트를 다시 부르면 비용 낭비다');
+    assert.equal(attempts.fortune, 2, '실패한 파트만 한 번 더 불러야 한다');
+  });
+
+  test('재시도해도 소용없는 오류는 즉시 포기한다 — 시간과 비용을 버리지 않는다', async () => {
+    const attempts = { total: 0 };
+    const client = {
+      async generate({ prompt }: { prompt: string }) {
+        attempts.total += 1;
+        if (prompt.includes('saju')) throw new Error('API key not valid');
+        return VALID_READING_JSON;
+      },
+    };
+
+    await assert.rejects(
+      () => analyzeFace(SAMPLE_INPUT, client, { sleep: async () => {} }),
+      /API key not valid/
+    );
+    assert.equal(attempts.total, 2, '키 오류는 재시도하지 않으므로 총 2회여야 한다');
+  });
+
+  test('재시도 중에도 대기(sleep)를 거친다 — 곧바로 몰아치지 않는다', async () => {
+    const waits: number[] = [];
+    const { client } = flakyClient('saju', 1);
+
+    await analyzeFace(SAMPLE_INPUT, client, {
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+
+    assert.ok(waits.length >= 1, '재시도 전에 기다려야 한다');
+    assert.ok(waits[0] >= 900, `백오프가 너무 짧다: ${waits[0]}ms`);
+  });
+
+  test('실패한 파트와 시도 횟수를 호출자에게 알려준다', async () => {
+    const seen: Array<{ part: string; attempt: number }> = [];
+    const { client } = flakyClient('saju', 1);
+
+    await analyzeFace(SAMPLE_INPUT, client, {
+      sleep: async () => {},
+      onAttemptError: ({ part, attempt }) => seen.push({ part, attempt }),
+    });
+
+    assert.deepEqual(seen, [{ part: 'fortune', attempt: 1 }], '실패 보고가 정확해야 한다');
   });
 });
 

@@ -20,7 +20,7 @@ type View =
   | { phase: 'idle' }
   | { phase: 'loading' }
   | { phase: 'result'; result: FaceReading; restored?: boolean }
-  | { phase: 'error'; code: AnalyzeErrorCode; message: string };
+  | { phase: 'error'; code: AnalyzeErrorCode; message: string; detail?: string };
 
 export default function Home() {
   const [preview, setPreview] = useState<string | null>(null);
@@ -106,7 +106,13 @@ export default function Home() {
         setView({ phase: 'result', result: body.result });
         saveResult(window.localStorage, body.result, preview);
       } else {
-        setView({ phase: 'error', code: body.code, message: body.message });
+        // detail은 개발 모드에서만 서버가 채운다 — 터미널을 안 봐도 원인이 화면에 드러난다.
+        setView({
+          phase: 'error',
+          code: body.code,
+          message: body.message,
+          detail: body.detail,
+        });
       }
     } catch {
       setView({
@@ -173,7 +179,11 @@ export default function Home() {
               />
               {view.phase === 'error' && (
                 <div className="mt-6">
-                  <ErrorBanner message={view.message} onRetry={handleBackToUpload} />
+                  <ErrorBanner
+                    message={view.message}
+                    detail={view.detail}
+                    onRetry={handleBackToUpload}
+                  />
                 </div>
               )}
             </>

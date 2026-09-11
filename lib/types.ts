@@ -123,6 +123,12 @@ export interface AnalyzeErrorBody {
   code: AnalyzeErrorCode;
   /** 사용자에게 그대로 보여줄 한국어 메시지 */
   message: string;
+  /**
+   * 개발 모드에서만 채워지는 원인 상세(업스트림 예외 원문 등).
+   * 터미널 로그를 뒤지지 않고 화면에서 바로 원인을 보기 위한 것이다 —
+   * 프로덕션에서는 내부 사정이 새어나가지 않도록 절대 채우지 않는다.
+   */
+  detail?: string;
 }
 
 export type AnalyzeResponseBody = AnalyzeSuccessBody | AnalyzeErrorBody;
