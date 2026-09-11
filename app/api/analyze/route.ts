@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { validateImageDataUrl } from '@/lib/image';
 import { createGeminiClient, analyzeFace } from '@/lib/gemini';
 import { classifyUpstreamError, isRetryableCode, toErrorResponse } from '@/lib/errors';
+import {
+  checkRateLimit,
+  clientKeyFromHeaders,
+  createHitStore,
+  sweepHitStore,
+  DEFAULT_RULES,
+} from '@/lib/ratelimit';
 import type { AnalyzeErrorCode, AnalyzeResponseBody } from '@/lib/types';
 
 /**
@@ -37,7 +44,36 @@ function describeError(error: unknown): string {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * 요청 기록은 프로세스 메모리에 둔다 (단일 VM 전제).
+ * 모듈 최상위에 두어 요청 간에 유지되게 한다.
+ */
+const hitStore = createHitStore();
+const MAX_RULE_WINDOW_MS = Math.max(...DEFAULT_RULES.map((r) => r.windowMs));
+let lastSweepAt = 0;
+
 export async function POST(request: NextRequest): Promise<NextResponse<AnalyzeResponseBody>> {
+  const now = Date.now();
+
+  // 가장 먼저 막는다 — 본문(최대 4MB)을 읽기도 전에 걸러야 제한의 의미가 있다.
+  const clientKey = clientKeyFromHeaders(request.headers);
+  const limit = checkRateLimit(hitStore, clientKey, now);
+
+  // 가끔 오래된 키를 쓸어 메모리가 무한히 자라지 않게 한다.
+  if (now - lastSweepAt > 10 * 60_000) {
+    lastSweepAt = now;
+    sweepHitStore(hitStore, now, MAX_RULE_WINDOW_MS);
+  }
+
+  if (!limit.allowed) {
+    console.warn(`[analyze] 요청 제한: key=${clientKey} rule=${limit.blockedBy}`);
+    const { body, status } = toErrorResponse('TOO_MANY_REQUESTS');
+    return NextResponse.json(body, {
+      status,
+      headers: { 'Retry-After': String(limit.retryAfterSec) },
+    });
+  }
+
   let image: unknown;
   try {
     const body = await request.json();

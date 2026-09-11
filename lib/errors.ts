@@ -19,6 +19,8 @@ const MESSAGES: Record<AnalyzeErrorCode, string> = {
     '이 사진으로는 분석 결과를 만들지 못했습니다. 얼굴이 정면으로 또렷하게 나온 다른 사진으로 시도해 주세요.',
   NETWORK_UNAVAILABLE:
     '서버가 AI 분석 서비스에 연결하지 못했습니다. 사진 문제가 아니라 서버의 네트워크 설정 문제입니다.',
+  TOO_MANY_REQUESTS:
+    '짧은 시간에 요청이 많았습니다. 잠시 뒤에 다시 시도해 주세요.',
 };
 
 const STATUSES: Record<AnalyzeErrorCode, number> = {
@@ -35,6 +37,7 @@ const STATUSES: Record<AnalyzeErrorCode, number> = {
   UPSTREAM_BUSY: 503,
   SAFETY_BLOCKED: 422,
   NETWORK_UNAVAILABLE: 503,
+  TOO_MANY_REQUESTS: 429,
 };
 
 export function messageForCode(code: AnalyzeErrorCode): string {

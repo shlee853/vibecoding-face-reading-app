@@ -1,0 +1,47 @@
+# 관상사주 분석 — systemd 유닛
+#
+# 서버에 둘 위치: /etc/systemd/system/face-reading.service
+# 적용:          sudo systemctl daemon-reload && sudo systemctl enable --now face-reading
+#
+# 앱이 어떤 이유로든 죽으면 자동으로 다시 띄운다. 서버가 재부팅돼도 알아서 올라온다.
+
+[Unit]
+Description=관상사주 분석 웹앱 (Next.js standalone)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/face-reading
+
+# API 키는 이 파일에서 읽는다. 유닛 파일에 직접 적지 않는다 —
+# 유닛 파일은 권한이 넓고 journalctl에 노출될 수 있다.
+# 만드는 법:  sudo install -m 600 -o ubuntu -g ubuntu /dev/null /etc/face-reading.env
+#             sudo nano /etc/face-reading.env   →  GEMINI_API_KEY=...
+EnvironmentFile=/etc/face-reading.env
+
+Environment=NODE_ENV=production
+Environment=PORT=3000
+# 127.0.0.1에만 묶는다. 외부 노출은 nginx가 담당하므로 앱을 직접 열어둘 이유가 없다.
+Environment=HOSTNAME=127.0.0.1
+
+ExecStart=/usr/bin/node server.js
+
+# 죽으면 항상 다시 띄운다. 재시작 폭주를 막기 위해 간격을 둔다.
+Restart=always
+RestartSec=3
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=face-reading
+
+# ── 최소한의 격리 ─────────────────────────────────────────────────────────
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/face-reading
+
+[Install]
+WantedBy=multi-user.target

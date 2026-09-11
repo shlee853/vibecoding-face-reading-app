@@ -100,6 +100,11 @@ export const ERROR_CODES = [
    * 사용자가 고칠 수 있는 것이 아니라 **서버 환경 문제**다 — 재시도해도 소용없다.
    */
   'NETWORK_UNAVAILABLE',
+  /**
+   * 이 서비스 자체가 건 요청 제한에 걸림 (업스트림의 429와 구별된다).
+   * 공개 배포에서 한 사람이 비용을 다 쓰는 것을 막기 위한 장치다.
+   */
+  'TOO_MANY_REQUESTS',
 ] as const;
 export type AnalyzeErrorCode = (typeof ERROR_CODES)[number];
 
