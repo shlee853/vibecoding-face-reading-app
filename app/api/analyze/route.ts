@@ -11,7 +11,7 @@ const MAX_ATTEMPTS = 3;
  * 재시도를 포함해 이 요청에 쓸 수 있는 전체 시간.
  * 재시도가 사용자를 무한정 기다리게 하면 오류보다 나쁜 경험이 된다.
  */
-const TOTAL_BUDGET_MS = 35_000;
+const TOTAL_BUDGET_MS = 110_000;
 
 /** 다음 시도까지 기다리는 시간. 요청량 초과는 조금 더 기다려야 풀린다. */
 function backoffMs(attempt: number, code: AnalyzeErrorCode): number {

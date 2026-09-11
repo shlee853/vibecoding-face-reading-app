@@ -1,7 +1,40 @@
 'use client';
 
-import { useState, type RefObject } from 'react';
+import { useEffect, useState, type RefObject } from 'react';
 import CameraCapture from './CameraCapture';
+
+/**
+ * 기다리는 동안 무슨 일이 일어나는지 알려준다.
+ * 분석은 수십 초가 걸릴 수 있는데, 아무 변화 없는 스피너만 돌면 사용자는 고장 났다고 판단한다.
+ */
+function AnalyzingProgress() {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const stage =
+    elapsed < 5
+      ? '사진을 읽는 중'
+      : elapsed < 15
+        ? '얼굴의 형태와 비율을 살피는 중'
+        : elapsed < 30
+          ? '사주와 애정운을 풀어보는 중'
+          : '결과를 정리하는 중';
+
+  return (
+    <div className="mt-4 text-center space-y-1">
+      <p className="text-gray-200 text-sm">
+        {stage}… <span className="tabular-nums text-gray-400">{elapsed}초</span>
+      </p>
+      <p className="text-gray-400 text-xs">
+        정성껏 보는 중이라 1분까지 걸릴 수 있어요. 창을 닫지 말고 기다려 주세요.
+      </p>
+    </div>
+  );
+}
 
 interface UploadPanelProps {
   preview: string | null;
@@ -126,6 +159,8 @@ export default function UploadPanel({
               )}
             </button>
           </div>
+
+          {isLoading && <AnalyzingProgress />}
         </>
       )}
     </>

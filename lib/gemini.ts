@@ -8,8 +8,13 @@ const MODEL_NAME = 'gemini-3.6-flash';
 /** 출력 상한. 넘으면 JSON이 잘려 파싱에 실패하므로 여유를 두되 무한정 두지 않는다. */
 const MAX_OUTPUT_TOKENS = 3072;
 
-/** 응답을 기다리는 상한. 이걸 넘기면 사용자를 무한정 붙잡아 두는 것보다 끊는 편이 낫다. */
-const REQUEST_TIMEOUT_MS = 25_000;
+/**
+ * 응답을 기다리는 상한.
+ *
+ * 25초로 뒀다가 정상 분석까지 잘라버렸다 — Gemini 비전 호출은 부하에 따라 편차가 크고
+ * 관측된 값만 해도 15.9초였다. 상한은 "비정상을 끊는" 값이어야지 "정상을 자르는" 값이면 안 된다.
+ */
+const REQUEST_TIMEOUT_MS = 90_000;
 
 class SafetyBlockedError extends Error {
   constructor(detail: string) {
