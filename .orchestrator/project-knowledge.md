@@ -133,6 +133,25 @@ SDK를 올릴 수 있게 되면 `lib/gemini.ts`에서 스키마를 넘기고 `li
 `lib/storage.ts`의 `loadResult`는 버전이 다르면 저장분을 버린다. 포맷을 바꾸고 버전을
 안 올리면 옛 저장분이 새 코드로 흘러들어간다.
 
+## 배포 (2026-09-12부터 운영 중)
+
+**서비스 주소**: https://168-107-8-13.sslip.io
+Oracle Cloud Ubuntu 24.04 / x86_64 / 956Mi + 스왑 4GB / Node v22 (nvm) / nginx 1.24
+
+- 절차는 `DEPLOY.md`. 갱신은 `./scripts/build-deploy.sh` → scp → `systemctl restart face-reading`.
+- **서버에서 빌드하지 마라.** 메모리가 956Mi뿐이라 `next build`가 OOM 난다.
+  로컬에서 standalone 번들을 만들어 올린다. 번들에 네이티브 바이너리가 없어
+  arm64 Mac → x86_64 서버 이식이 안전하다(확인함).
+- **`scripts/build-deploy.sh`를 쓰고 직접 tar로 묶지 마라.** standalone은 `.next/static`을
+  포함하지 않아서, 빠뜨리면 화면은 뜨는데 JS가 404나 버튼이 전혀 동작하지 않는다.
+- **systemd `ExecStart`에는 node 절대 경로가 필요하다.** 이 서버의 node는 nvm 아래
+  (`/home/ubuntu/.nvm/versions/node/v22.22.0/bin/node`)에 있다. `/usr/bin/node`로 두면
+  `status=203/EXEC`로 무한 재시작하고, 밖에서는 **502로만 보여** 원인이 가려진다.
+  node 버전을 올리면 이 경로가 깨지므로 주의.
+- 오케스트레이터의 샌드박스는 **SSH(TCP 22)가 EPERM으로 막히지만 HTTP/HTTPS는 통과한다.**
+  그래서 배포 자체는 사용자가 하고, **검증은 오케스트레이터가 외부에서 직접 할 수 있다**
+  (헬스체크·정적 파일·요청 제한까지 확인 가능).
+
 ## 미해결 / 다음이 볼 것
 
 - **응답 시간 5초 목표가 실측된 적이 없다.** 스프린트 2 DoD의 유일한 잔여 항목.
