@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateImageDataUrl } from '@/lib/image';
 import { createGeminiClient, analyzeFace } from '@/lib/gemini';
+import { validateApiKey } from '@/lib/apikey';
 import { classifyUpstreamError, isRetryableCode, toErrorResponse } from '@/lib/errors';
 import {
   checkRateLimit,
@@ -89,13 +90,19 @@ export async function POST(request: NextRequest): Promise<NextResponse<AnalyzeRe
     return NextResponse.json(body, { status });
   }
 
+  // 키 형식을 **부르기 전에** 본다. 헤더에 못 싣는 문자가 섞여 있으면 요청이 만들어지지도
+  // 않는데, 그걸 모르고 재시도까지 하면 실패가 뻔한 호출을 네 번 반복하게 된다.
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    const { body, status } = toErrorResponse('NO_API_KEY');
-    return NextResponse.json(body, { status });
+  const keyCheck = validateApiKey(apiKey);
+  if (!keyCheck.ok) {
+    console.error(`[analyze] API 키 설정 문제 (${keyCheck.reason}): ${keyCheck.detail}`);
+    const { body, status } = toErrorResponse(
+      keyCheck.reason === 'missing' ? 'NO_API_KEY' : 'INVALID_API_KEY'
+    );
+    return NextResponse.json(isDev ? { ...body, detail: keyCheck.detail } : body, { status });
   }
 
-  const client = createGeminiClient(apiKey);
+  const client = createGeminiClient(apiKey as string);
   const requestStartedAt = Date.now();
   let lastCode: AnalyzeErrorCode = 'UPSTREAM_FAILED';
   let lastDetail: string | undefined;

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { validateApiKey } from '@/lib/apikey';
 
 /**
  * 배포된 서버가 살아 있고 제대로 설정됐는지 확인하는 엔드포인트.
@@ -13,17 +14,20 @@ export const dynamic = 'force-dynamic';
 const startedAt = Date.now();
 
 export function GET() {
-  const hasApiKey = Boolean(process.env.GEMINI_API_KEY);
+  // 값의 존재만 보지 않고 **형식까지** 본다.
+  // 예전에 자리표시자(한글)가 그대로 들어간 상태에서 "configured"라고 보고해
+  // 모든 분석이 실패하는 동안 문제를 가린 적이 있다.
+  const key = validateApiKey(process.env.GEMINI_API_KEY);
 
   return NextResponse.json(
     {
-      ok: hasApiKey,
-      // 키가 없으면 서버는 떠 있어도 서비스는 불가능하다 — 그 사실을 분명히 한다.
-      apiKey: hasApiKey ? 'configured' : 'missing',
+      ok: key.ok,
+      apiKey: key.ok ? 'configured' : key.reason,
+      ...(key.ok ? {} : { apiKeyDetail: key.detail }),
       uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
       node: process.version,
       env: process.env.NODE_ENV ?? 'unknown',
     },
-    { status: hasApiKey ? 200 : 503 }
+    { status: key.ok ? 200 : 503 }
   );
 }
