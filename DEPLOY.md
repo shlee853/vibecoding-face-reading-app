@@ -241,7 +241,22 @@ sudo journalctl -u face-reading | grep '\[analyze\]'   # 분석 실패 원인만
 | 카메라 탭이 막힘 | HTTPS로 접속했는지 확인 (6단계) |
 | 모든 분석이 "서버가 AI 분석 서비스에 연결하지 못했습니다" | VM에서 외부 HTTPS 아웃바운드가 막힌 것입니다. `curl -I https://generativelanguage.googleapis.com` 으로 확인 |
 | `"apiKey":"missing"` | `/etc/face-reading.env` 를 확인하고 `sudo systemctl restart face-reading` |
+| **502 Bad Gateway** + 서비스가 `status=203/EXEC` 로 반복 재시작 | **유닛의 node 경로가 틀린 것입니다.** systemd는 로그인 셸의 PATH를 쓰지 않아 node 위치가 apt/nvm에 따라 다릅니다. 아래 한 줄로 고치세요 |
 | 요청 제한에 자꾸 걸림 | nginx가 `X-Forwarded-For` 를 넘기는지 확인. 빠지면 모든 방문자가 한 사람으로 취급됩니다 |
+
+### node 경로가 틀렸을 때 (203/EXEC)
+
+```bash
+NODE_BIN=$(readlink -f "$(command -v node)")
+echo "node 실제 경로: $NODE_BIN"
+sudo sed -i "s|^ExecStart=.*|ExecStart=$NODE_BIN server.js|" /etc/systemd/system/face-reading.service
+sudo systemctl daemon-reload && sudo systemctl reset-failed face-reading && sudo systemctl restart face-reading
+sleep 4 && curl -s http://127.0.0.1:3000/api/health
+```
+
+> nvm으로 설치한 node를 쓰면 경로에 버전이 박힙니다(`~/.nvm/versions/node/v22.22.0/bin/node`).
+> 나중에 node를 올리면 이 경로가 깨지므로, 운영을 오래 할 계획이면
+> `sudo apt install -y nodejs` 로 시스템 경로(`/usr/bin/node`)에 두는 편이 안정적입니다.
 
 ## 비용 관리
 
