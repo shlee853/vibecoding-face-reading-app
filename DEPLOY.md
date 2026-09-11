@@ -2,6 +2,20 @@
 
 관상사주 분석 웹앱을 인터넷에 공개하는 절차입니다. 위에서부터 순서대로 따라 하면 됩니다.
 
+## 이 배포의 값 (2026-09-12 확정)
+
+| 항목 | 값 |
+|---|---|
+| 클라우드 | Oracle Cloud |
+| 서버 IP | `168.107.8.13` |
+| 접속 도메인 | `168-107-8-13.sslip.io` (도메인 미보유 → sslip.io 사용) |
+| 최종 주소 | `https://168-107-8-13.sslip.io` |
+
+> **sslip.io가 뭔가요**: IP를 그대로 이름으로 되돌려주는 공개 DNS입니다.
+> `168-107-8-13.sslip.io` 를 조회하면 `168.107.8.13` 이 나옵니다. 도메인을 사지 않고도
+> Let's Encrypt 인증서를 받을 수 있어, **카메라에 필요한 HTTPS**를 확보할 수 있습니다.
+> 나중에 실제 도메인을 사면 nginx의 `server_name` 만 바꾸고 certbot을 다시 돌리면 됩니다.
+
 ## 왜 Oracle VM인가
 
 이 앱의 분석은 **20~60초**가 걸립니다. Vercel 같은 서버리스 무료 요금제는 함수 실행 시간
@@ -64,7 +78,7 @@ sudo netfilter-persistent save
 ## 3. 서버 초기 설정
 
 ```bash
-ssh ubuntu@<서버IP>
+ssh ubuntu@168.107.8.13
 ```
 
 ```bash
@@ -101,8 +115,8 @@ GEMINI_API_KEY=여기에_실제_키
 `deploy-bundle.tar.gz` 가 생깁니다. 서버로 보냅니다:
 
 ```bash
-scp deploy-bundle.tar.gz ubuntu@<서버IP>:~/
-scp deploy/face-reading.service deploy/nginx.conf ubuntu@<서버IP>:~/
+scp deploy-bundle.tar.gz ubuntu@168.107.8.13:~/
+scp deploy/face-reading.service deploy/nginx.conf ubuntu@168.107.8.13:~/
 ```
 
 **서버에서** 펼칩니다:
@@ -132,12 +146,11 @@ curl -s http://127.0.0.1:3000/api/health
 
 ## 6. nginx + HTTPS
 
-도메인이 없으면 **sslip.io** 를 쓰면 됩니다. 서버 IP가 `130.61.22.33` 이면
-도메인은 `130-61-22-33.sslip.io` 입니다 (점을 하이픈으로).
+`deploy/nginx.conf` 에 `168-107-8-13.sslip.io` 가 이미 들어 있습니다. 그대로 복사하면 됩니다.
 
 ```bash
 sudo cp ~/nginx.conf /etc/nginx/sites-available/face-reading
-sudo nano /etc/nginx/sites-available/face-reading   # <도메인> 을 실제 값으로 교체
+# nginx.conf에 도메인이 이미 채워져 있어 수정할 것이 없습니다
 sudo ln -sf /etc/nginx/sites-available/face-reading /etc/nginx/sites-enabled/
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
@@ -147,7 +160,7 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d <도메인>
+sudo certbot --nginx -d 168-107-8-13.sslip.io
 ```
 
 certbot이 HTTPS 블록을 자동으로 추가하고 자동 갱신도 설정합니다.
@@ -159,10 +172,10 @@ certbot이 HTTPS 블록을 자동으로 추가하고 자동 갱신도 설정합�
 ## 7. 확인
 
 ```bash
-curl -s https://<도메인>/api/health
+curl -s https://168-107-8-13.sslip.io/api/health
 ```
 
-브라우저에서 `https://<도메인>` 접속 후:
+브라우저에서 `https://168-107-8-13.sslip.io` 접속 후:
 
 - [ ] 사진 업로드 → 분석 결과가 5개 섹션으로 나온다
 - [ ] 카메라 촬영 → 좌우 반전된 미리보기, 촬영 후 분석
@@ -178,7 +191,7 @@ curl -s https://<도메인>/api/health
 ```bash
 # 로컬
 ./scripts/build-deploy.sh
-scp deploy-bundle.tar.gz ubuntu@<서버IP>:~/
+scp deploy-bundle.tar.gz ubuntu@168.107.8.13:~/
 
 # 서버
 rm -rf ~/face-reading && mkdir -p ~/face-reading
