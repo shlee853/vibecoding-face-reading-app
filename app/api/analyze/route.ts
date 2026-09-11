@@ -4,8 +4,13 @@ import { createGeminiClient, analyzeFace } from '@/lib/gemini';
 import { classifyUpstreamError, isRetryableCode, toErrorResponse } from '@/lib/errors';
 import type { AnalyzeErrorCode, AnalyzeResponseBody } from '@/lib/types';
 
-/** 한 요청 안에서 시도할 최대 횟수 */
-const MAX_ATTEMPTS = 3;
+/**
+ * 한 요청 안에서 시도할 최대 횟수.
+ *
+ * 한 번의 시도가 Gemini를 **두 번**(관상·운세 병렬) 호출하므로, 3회로 두면 최악의 경우
+ * 이미지 분석이 6번 청구된다. 2회로 묶어 비용 상한을 분명히 한다.
+ */
+const MAX_ATTEMPTS = 2;
 
 /**
  * 재시도를 포함해 이 요청에 쓸 수 있는 전체 시간.

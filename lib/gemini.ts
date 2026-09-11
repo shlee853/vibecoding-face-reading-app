@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { buildAnalysisPrompt } from './prompt';
-import { parseAnalysis } from './parse';
+import { buildFacePrompt, buildFortunePrompt } from './prompt';
+import { extractJsonBlock, parseAnalysisValue } from './parse';
 import type { ParseResult, VisionClient } from './types';
 
 const MODEL_NAME = 'gemini-3.6-flash';
@@ -86,25 +86,67 @@ export function createGeminiClient(apiKey: string): VisionClient {
   };
 }
 
+function asObject(v: unknown): Record<string, unknown> | null {
+  return v !== null && typeof v === 'object' && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : null;
+}
+
+/** 응답이 "얼굴을 못 찾았다"고 말하고 있으면 그 사유를 돌려준다. */
+function noFaceReason(value: unknown): string | null {
+  const obj = asObject(value);
+  if (!obj || obj.faceDetected !== false) return null;
+  const reason = obj.reason;
+  return typeof reason === 'string' && reason.trim().length > 0
+    ? reason
+    : '사진에서 얼굴을 인식할 수 없습니다. 정면이 잘 보이는 밝은 사진으로 다시 시도해 주세요.';
+}
+
 /**
- * 얼굴 사진을 분석한다. 프롬프트를 구성해 클라이언트에 넘기고, 받은 텍스트를 파싱한다.
+ * 얼굴 사진을 분석한다.
+ *
+ * **관상 파트와 운세 파트를 동시에(병렬) 생성한 뒤 두 결과를 합친다.**
+ * 한 번에 전부 생성하면 출력 토큰이 그대로 지연이 되어, 내용을 충실히 할수록 느려진다.
+ * 절반씩 동시에 만들면 같은 시간에 두 배 분량을 얻는다 — 대신 이미지를 두 번 보내므로
+ * API 호출 비용은 두 배가 된다.
+ *
  * 업스트림 예외는 잡지 않고 그대로 던진다 — 분류는 호출자(API 라우트)의 책임이다.
+ * 둘 중 하나만 실패해도 Promise.all이 그 예외를 던진다.
  */
 export async function analyzeFace(
   input: { base64: string; mimeType: string },
   client: VisionClient
 ): Promise<{ parsed: ParseResult; elapsedMs: number }> {
-  const prompt = buildAnalysisPrompt();
-
   const startedAt = Date.now();
-  const raw = await client.generate({
-    base64: input.base64,
-    mimeType: input.mimeType,
-    prompt,
-  });
+
+  const [faceRaw, fortuneRaw] = await Promise.all([
+    client.generate({
+      base64: input.base64,
+      mimeType: input.mimeType,
+      prompt: buildFacePrompt(),
+    }),
+    client.generate({
+      base64: input.base64,
+      mimeType: input.mimeType,
+      prompt: buildFortunePrompt(),
+    }),
+  ]);
+
   const elapsedMs = Date.now() - startedAt;
 
-  const parsed = parseAnalysis(raw);
+  const faceValue = extractJsonBlock(faceRaw);
+  const fortuneValue = extractJsonBlock(fortuneRaw);
+
+  // 어느 쪽이든 얼굴이 없다고 하면 그 판정을 따른다.
+  // 한쪽만 보고 진행하면 "얼굴 없는 사진에 운세만 붙은" 결과가 나온다.
+  const reason = noFaceReason(faceValue) ?? noFaceReason(fortuneValue);
+  if (reason) {
+    return { parsed: { kind: 'noface', reason }, elapsedMs };
+  }
+
+  // 두 응답을 합쳐 단일 호출 때와 **동일한 기준**으로 검증한다.
+  const merged = { ...(asObject(faceValue) ?? {}), ...(asObject(fortuneValue) ?? {}) };
+  const parsed = parseAnalysisValue(merged, `${faceRaw}\n--- 운세 파트 ---\n${fortuneRaw}`);
 
   return { parsed, elapsedMs };
 }

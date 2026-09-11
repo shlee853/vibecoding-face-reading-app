@@ -143,27 +143,110 @@ describe('analyzeFace — 업스트림 예외 전파 (회귀)', () => {
   });
 });
 
-describe('analyzeFace — client.generate 호출 검증 (회귀)', () => {
-  test('generate가 정확히 한 번, 입력 base64/mimeType과 함께 호출된다', async () => {
+describe('analyzeFace — 관상·운세 두 파트를 병렬 호출한다', () => {
+  test('generate가 정확히 두 번, 같은 이미지와 함께 호출된다', async () => {
     const { client, calls } = makeFakeClient({ response: VALID_READING_JSON });
     await analyzeFace(SAMPLE_INPUT, client);
-    assert.equal(calls.length, 1, 'generate가 정확히 한 번 호출되어야 한다');
-    assert.equal(calls[0].base64, SAMPLE_INPUT.base64);
-    assert.equal(calls[0].mimeType, SAMPLE_INPUT.mimeType);
+
+    assert.equal(calls.length, 2, '관상 파트와 운세 파트로 두 번 호출되어야 한다');
+    for (const call of calls) {
+      assert.equal(call.base64, SAMPLE_INPUT.base64, '두 호출 모두 같은 이미지를 받아야 한다');
+      assert.equal(call.mimeType, SAMPLE_INPUT.mimeType);
+    }
   });
 
-  test('generate에 비어있지 않은 분석 프롬프트가 전달된다 (스키마 키를 포함)', async () => {
+  test('두 호출에 서로 다른 프롬프트가 전달된다 — 같으면 나눈 의미가 없다', async () => {
     const { client, calls } = makeFakeClient({ response: VALID_READING_JSON });
     await analyzeFace(SAMPLE_INPUT, client);
-    const { prompt } = calls[0];
-    assert.equal(typeof prompt, 'string');
-    assert.ok(prompt.trim().length > 0, 'prompt가 비어있다');
-    // analyzeFace가 lib/prompt.ts의 buildAnalysisPrompt()로 만든 프롬프트를 실제로 전달하는지
-    // 최소한의 스키마 키 포함 여부로 확인한다 (exact-match는 구현 세부사항에 지나치게
-    // 결합되므로 피했다 — 이유는 최종 보고의 "판단이 필요했던 지점" 참고).
-    assert.ok(prompt.includes('faceDetected'));
-    assert.ok(prompt.includes('saju'));
-    assert.ok(prompt.includes('love'));
+
+    const [a, b] = calls.map((c) => c.prompt);
+    assert.ok(a.trim().length > 0 && b.trim().length > 0, '프롬프트가 비어있다');
+    assert.notEqual(a, b, '두 호출이 같은 프롬프트를 쓰면 분할이 무의미하다');
+  });
+
+  test('두 프롬프트를 합치면 필요한 스키마가 모두 요구된다', async () => {
+    const { client, calls } = makeFakeClient({ response: VALID_READING_JSON });
+    await analyzeFace(SAMPLE_INPUT, client);
+
+    const combined = calls.map((c) => c.prompt).join('\n');
+    for (const key of ['faceDetected', 'features', 'personality', 'saju', 'love']) {
+      assert.ok(combined.includes(key), `어느 프롬프트에도 "${key}" 가 없다`);
+    }
+  });
+
+  test('한쪽 호출이 실패하면 전체가 실패한다 — 반쪽 결과를 내보내지 않는다', async () => {
+    let n = 0;
+    const client = {
+      async generate() {
+        n += 1;
+        if (n === 2) throw new Error('두 번째 파트 실패');
+        return VALID_READING_JSON;
+      },
+    };
+
+    await assert.rejects(() => analyzeFace(SAMPLE_INPUT, client), /두 번째 파트 실패/);
+  });
+});
+
+describe('analyzeFace — 두 응답을 합쳐 단일 호출과 같은 기준으로 검증한다', () => {
+  test('한쪽에만 얼굴 없음이 오면 noface로 판정한다', async () => {
+    let n = 0;
+    const client = {
+      async generate() {
+        n += 1;
+        return n === 1
+          ? JSON.stringify({ faceDetected: false, reason: '얼굴이 가려져 있습니다' })
+          : VALID_READING_JSON;
+      },
+    };
+
+    const { parsed } = await analyzeFace(SAMPLE_INPUT, client);
+    assert.equal(parsed.kind, 'noface');
+    if (parsed.kind === 'noface') {
+      assert.match(parsed.reason, /가려/);
+    }
+  });
+
+  test('두 파트가 각자 절반씩만 주어도 합치면 ok가 된다', async () => {
+    const full = JSON.parse(VALID_READING_JSON) as Record<string, unknown>;
+    const facePart = {
+      faceDetected: true,
+      features: full.features,
+      personality: full.personality,
+    };
+    const fortunePart = { faceDetected: true, saju: full.saju, love: full.love };
+
+    let n = 0;
+    const client = {
+      async generate() {
+        n += 1;
+        return JSON.stringify(n === 1 ? facePart : fortunePart);
+      },
+    };
+
+    const { parsed } = await analyzeFace(SAMPLE_INPUT, client);
+    assert.equal(parsed.kind, 'ok', '두 반쪽을 합치면 완전한 결과가 되어야 한다');
+  });
+
+  test('한쪽이 통째로 빠지면 unparsable — 기준을 느슨하게 하지 않는다', async () => {
+    const full = JSON.parse(VALID_READING_JSON) as Record<string, unknown>;
+    const facePart = {
+      faceDetected: true,
+      features: full.features,
+      personality: full.personality,
+    };
+
+    let n = 0;
+    const client = {
+      async generate() {
+        n += 1;
+        // 운세 파트가 형식을 지키지 못한 상황
+        return n === 1 ? JSON.stringify(facePart) : '죄송합니다, 분석할 수 없습니다.';
+      },
+    };
+
+    const { parsed } = await analyzeFace(SAMPLE_INPUT, client);
+    assert.equal(parsed.kind, 'unparsable', 'saju·love가 없으면 통과시키면 안 된다');
   });
 });
 

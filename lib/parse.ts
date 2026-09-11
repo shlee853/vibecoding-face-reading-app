@@ -77,8 +77,18 @@ function normalizeElement(v: unknown): (typeof ELEMENTS)[number] | null {
 
 /** Gemini 원문 텍스트를 구조화된 결과로 판정한다. */
 export function parseAnalysis(raw: string): ParseResult {
-  const value = extractJsonBlock(raw);
+  return parseAnalysisValue(extractJsonBlock(raw), raw);
+}
 
+/**
+ * 이미 객체로 만들어진 값을 판정한다.
+ *
+ * 분석을 두 번에 나눠 호출하므로, 두 응답을 합친 객체를 여기로 넘긴다.
+ * 검증 규칙은 단일 호출 때와 **완전히 동일**하다 — 나눠 받았다고 기준을 느슨하게 하지 않는다.
+ *
+ * @param raw 판정에 실패했을 때 보고에 남길 원문
+ */
+export function parseAnalysisValue(value: unknown, raw: string): ParseResult {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     return { kind: 'unparsable', raw };
   }
