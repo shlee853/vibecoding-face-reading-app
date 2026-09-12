@@ -63,15 +63,18 @@ export async function GET(request: NextRequest) {
   // deep=2 는 생성 엔드포인트까지 최소 규모로 찔러본다.
   // 목록 조회만으로는 잡히지 않는 권한·할당량 문제가 여기서 드러난다.
   const alsoGenerate = request.nextUrl.searchParams.get('deep') === '2';
+  // ?model= 로 다른 모델을 지정해 볼 수 있다.
+  // 차단이 프로젝트 전체인지 특정 모델인지 갈라내는 데 쓴다 — 후자면 모델명만 바꾸면 된다.
+  const probeModel = request.nextUrl.searchParams.get('model') || MODEL_NAME;
   const generate =
-    alsoGenerate && upstream.authenticated ? await probeGenerate(apiKey, MODEL_NAME) : undefined;
+    alsoGenerate && upstream.authenticated ? await probeGenerate(apiKey, probeModel) : undefined;
 
   return NextResponse.json(
     {
       ...base,
       ok: base.ok && upstream.authenticated && (generate ? generate.ok : true),
       upstream,
-      ...(generate ? { generate } : {}),
+      ...(generate ? { generate: { model: probeModel, ...generate } } : {}),
     },
     { status: upstream.authenticated && (generate ? generate.ok : true) ? 200 : 503 }
   );
