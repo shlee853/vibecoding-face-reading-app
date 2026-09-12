@@ -126,6 +126,54 @@ export async function probeUpstream(
   }
 }
 
+/**
+ * 실제 생성 호출을 최소 규모로 한 번 해 본다.
+ *
+ * 모델 목록 조회(무료)만으로는 잡히지 않는 것이 있다 — 생성 엔드포인트에서만 나는
+ * 권한·할당량·정책 오류다. "키도 모델도 멀쩡한데 분석만 실패"할 때 마지막으로 남는 구간이다.
+ *
+ * 텍스트 몇 글자만 요청하므로 비용은 사실상 없다. 이미지는 보내지 않는다.
+ */
+export async function probeGenerate(
+  apiKey: string,
+  model: string
+): Promise<{ ok: boolean; status: number | null; detail: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  const url = `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent`;
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: 'ping' }] }],
+        generationConfig: { maxOutputTokens: 8 },
+      }),
+      signal: controller.signal,
+    });
+
+    const text = await res.text();
+    if (res.ok) {
+      return { ok: true, status: res.status, detail: '생성 호출 정상 — 분석 실패는 다른 원인입니다.' };
+    }
+    return { ok: false, status: res.status, detail: summarizeGoogleError(res.status, text) };
+  } catch (e) {
+    const name = (e as { name?: string } | null)?.name;
+    const msg = (e as { message?: string } | null)?.message ?? String(e);
+    return {
+      ok: false,
+      status: null,
+      detail:
+        name === 'AbortError'
+          ? `${PROBE_TIMEOUT_MS}ms 안에 응답이 없습니다.`
+          : `생성 호출에 실패했습니다: ${msg.slice(0, 200)}`,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** 상태 코드별로 "그래서 무엇을 고쳐야 하는가"를 덧붙인다. */
 function summarizeGoogleError(status: number, body: string): string {
   const raw = body.replace(/\s+/g, ' ').slice(0, 300);

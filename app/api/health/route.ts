@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { validateApiKey } from '@/lib/apikey';
-import { probeUpstream } from '@/lib/upstream-probe';
+import { probeUpstream, probeGenerate } from '@/lib/upstream-probe';
 import { MODEL_NAME } from '@/lib/gemini';
 
 /**
@@ -39,7 +39,8 @@ export async function GET(request: NextRequest) {
     env: process.env.NODE_ENV ?? 'unknown',
   };
 
-  const wantsDeep = request.nextUrl.searchParams.get('deep') === '1';
+  const deepParam = request.nextUrl.searchParams.get('deep');
+  const wantsDeep = deepParam === '1' || deepParam === '2';
   if (!wantsDeep || !key.ok) {
     return NextResponse.json(base, { status: key.ok ? 200 : 503 });
   }
@@ -54,11 +55,24 @@ export async function GET(request: NextRequest) {
   }
   lastDeepProbeAt = now;
 
+  const apiKey = process.env.GEMINI_API_KEY as string;
+
   // 모델 목록 조회라 토큰 비용이 들지 않는다.
-  const upstream = await probeUpstream(process.env.GEMINI_API_KEY as string, MODEL_NAME);
+  const upstream = await probeUpstream(apiKey, MODEL_NAME);
+
+  // deep=2 는 생성 엔드포인트까지 최소 규모로 찔러본다.
+  // 목록 조회만으로는 잡히지 않는 권한·할당량 문제가 여기서 드러난다.
+  const alsoGenerate = request.nextUrl.searchParams.get('deep') === '2';
+  const generate =
+    alsoGenerate && upstream.authenticated ? await probeGenerate(apiKey, MODEL_NAME) : undefined;
 
   return NextResponse.json(
-    { ...base, ok: base.ok && upstream.authenticated, upstream },
-    { status: upstream.authenticated ? 200 : 503 }
+    {
+      ...base,
+      ok: base.ok && upstream.authenticated && (generate ? generate.ok : true),
+      upstream,
+      ...(generate ? { generate } : {}),
+    },
+    { status: upstream.authenticated && (generate ? generate.ok : true) ? 200 : 503 }
   );
 }
