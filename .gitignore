@@ -38,3 +38,5 @@ next-env.d.ts
 
 # local node versions
 .node-versions/
+tsc.txt
+test.txt
