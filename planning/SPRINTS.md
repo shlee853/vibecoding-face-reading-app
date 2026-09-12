@@ -124,8 +124,10 @@
   - [x] `output: 'standalone'`으로 빌드 산출물만으로 구동된다 — 서버에서 빌드하지 않음
   - [x] systemd로 자동 재시작된다 — 실제 장애 중 203회 재시작으로 검증됨(의도치 않게)
   - [x] nginx + Let's Encrypt로 HTTPS 접속이 된다 — 인증서 검증 통과, HTTP→HTTPS 301
-  - [ ] **HTTPS 주소에서 카메라 촬영이 동작한다** — 사용자 브라우저 확인 필요
+  - [x] **HTTPS 주소에서 카메라 촬영이 동작한다** — 사용자 브라우저에서 확인 완료
   - [x] 배포 런북대로 따라 하면 재현된다 — node 경로 문제 1건 발견 후 문서에 반영
+  - [x] **(추가) 푸시만으로 자동 배포된다** — GitHub Actions, 검증 통과 시에만 배포, 실패 시 자동 롤백
+  - [x] **(추가) 배포된 버전을 밖에서 확인할 수 있다** — `/api/health`의 `version`이 커밋 해시
 
   > **서비스 주소**: https://168-107-8-13.sslip.io
   > 배포 절차: `DEPLOY.md` / 갱신: `./scripts/build-deploy.sh` → scp → `systemctl restart`
