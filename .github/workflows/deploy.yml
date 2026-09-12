@@ -114,11 +114,30 @@ jobs:
           printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-          # 키가 제대로 들어갔는지 먼저 확인한다. 여기서 실패하면 원인이 분명해진다.
-          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null \
-            || { echo "DEPLOY_SSH_KEY 시크릿이 올바른 개인키가 아닙니다. BEGIN~END 전문을 줄바꿈 포함해 붙여넣었는지 확인하세요."; exit 1; }
+          # ── 1) 키 형식 ────────────────────────────────────────────────
+          if ! ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null 2>~/keyerr.txt; then
+            ERR=$(sed 's/%/%25/g' ~/keyerr.txt | awk '{printf "%s%%0A", $0}')
+            LINES=$(wc -l < ~/.ssh/deploy_key)
+            FIRST=$(head -1 ~/.ssh/deploy_key | cut -c1-40)
+            echo "::error title=DEPLOY_SSH_KEY 형식 오류::시크릿이 올바른 OpenSSH 개인키가 아닙니다.%0A줄 수=${LINES}, 첫 줄='${FIRST}'%0A(정상이라면 첫 줄이 -----BEGIN OPENSSH PRIVATE KEY----- 이고 줄 수는 보통 7줄 이상)%0A원본 오류: ${ERR}"
+            exit 1
+          fi
+          echo "키 형식 정상 (지문: $(ssh-keygen -lf ~/.ssh/deploy_key | awk '{print $2}'))"
 
-          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          # ── 2) 서버 22번 포트 도달 가능 여부 ──────────────────────────
+          # 여기서 막히면 키 문제가 아니라 방화벽 문제다. 둘을 반드시 구분해야
+          # 엉뚱한 곳을 고치느라 시간을 버리지 않는다.
+          if ! ssh-keyscan -T 10 -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>~/scanerr.txt; then
+            ERR=$(sed 's/%/%25/g' ~/scanerr.txt | awk '{printf "%s%%0A", $0}')
+            echo "::error title=서버 SSH 접속 불가::GitHub 러너에서 ${{ secrets.DEPLOY_HOST }}:22 에 닿지 못했습니다.%0A키 문제가 아니라 **방화벽** 문제입니다.%0AOracle 콘솔의 Security List에서 22번 포트가 0.0.0.0/0 에 열려 있는지 확인하세요.%0A(GitHub 러너의 IP는 고정되지 않아 특정 IP만 허용하면 접속할 수 없습니다)%0A원본 오류: ${ERR}"
+            exit 1
+          fi
+          # known_hosts가 비어 있으면 호스트 키를 못 받은 것이다 (조용한 실패 방지)
+          test -s ~/.ssh/known_hosts || {
+            echo "::error title=서버 SSH 접속 불가::호스트 키를 받지 못했습니다. 22번 포트 방화벽을 확인하세요."
+            exit 1
+          }
+          echo "서버 22번 포트 도달 확인"
 
       - name: 서버로 전송
         if: steps.cfg.outputs.ready == 'true'
