@@ -12,6 +12,19 @@ const nextConfig = {
    */
   output: 'standalone',
 
+  /**
+   * 빌드 산출물 디렉토리.
+   *
+   * 배포 번들을 만들 때 `.next`를 지우고 다시 빌드하는데, 그때 개발 서버(`next dev`)가
+   * 돌고 있으면 **그 밑의 캐시가 통째로 사라져** 서버가 깨진다
+   * (`Cannot find module '.next/server/middleware-manifest.json'`).
+   * 실제로 두 번 겪었다.
+   *
+   * 그래서 배포 빌드는 `NEXT_DIST_DIR=.next-deploy` 로 **다른 디렉토리**를 쓴다.
+   * 개발 서버의 `.next`는 건드리지 않는다.
+   */
+  distDir: process.env.NEXT_DIST_DIR || '.next',
+
   // 배포 산출물에 소스맵을 넣지 않는다 (용량과 노출 최소화).
   productionBrowserSourceMaps: false,
 
