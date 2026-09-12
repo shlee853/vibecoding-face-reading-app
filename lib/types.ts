@@ -111,8 +111,18 @@ export type AnalyzeErrorCode = (typeof ERROR_CODES)[number];
 /** 업로드가 허용되는 이미지 MIME */
 export const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 
-/** base64 디코딩 기준 이미지 크기 상한 (4MB) */
+/** 서버로 전송되는 이미지(base64 디코딩 기준) 크기 상한 (4MB) */
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * 브라우저가 읽어들일 **원본 파일** 크기 상한 (25MB).
+ *
+ * 전송 전에 긴 변 1024px로 줄이므로 원본이 크다고 문제될 것이 없다.
+ * 오히려 원본에 4MB 상한을 걸었더니 **요즘 휴대폰 사진(보통 3~12MB)이 전부 거절됐다** —
+ * 모바일에서 "업로드가 안 된다"는 신고의 원인이었다.
+ * 여기 상한은 브라우저 메모리를 지키기 위한 안전장치일 뿐이다.
+ */
+export const MAX_SOURCE_IMAGE_BYTES = 25 * 1024 * 1024;
 
 /** POST /api/analyze 성공 응답 본문 */
 export interface AnalyzeSuccessBody {

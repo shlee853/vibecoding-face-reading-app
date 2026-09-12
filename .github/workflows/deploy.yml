@@ -32,11 +32,49 @@ jobs:
       - name: 의존성 설치
         run: npm ci
 
+      - name: 환경 정보
+        # 로컬과 CI의 런타임 차이 때문에만 깨지는 경우가 있어 먼저 기록해 둔다.
+        run: |
+          {
+            echo "## 환경"
+            echo '```'
+            echo "node    $(node --version)"
+            echo "npm     $(npm --version)"
+            echo "tsc     $(npx tsc --version)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: 타입 검사
-        run: npx tsc --noEmit
+        run: |
+          set -o pipefail
+          npx tsc --noEmit 2>&1 | tee /tmp/tsc.txt || {
+            {
+              echo "## 타입 검사 실패"
+              echo '```'
+              head -40 /tmp/tsc.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
 
       - name: 단위 테스트
-        run: npm test
+        # 실패 내용을 잡 요약에 남긴다.
+        # 로그 본문은 인증 없이 못 읽지만 요약은 공개 API로 읽을 수 있어,
+        # 실패 원인을 사람에게 물어보지 않고 바로 확인할 수 있다.
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee /tmp/test.txt || {
+            {
+              echo "## 테스트 실패"
+              echo '```'
+              grep -E "^# (tests|pass|fail)" /tmp/test.txt || true
+              echo '--- 실패 항목 ---'
+              grep -B2 -A18 "^not ok\|^    not ok" /tmp/test.txt | head -80
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+          grep -E "^# (tests|pass|fail)" /tmp/test.txt >> "$GITHUB_STEP_SUMMARY" || true
 
   deploy:
     name: 배포

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ALLOWED_MIME_TYPES,
   MAX_IMAGE_BYTES,
+  MAX_SOURCE_IMAGE_BYTES,
   type AnalyzeErrorCode,
   type AnalyzeResponseBody,
   type FaceReading,
@@ -50,11 +51,15 @@ export default function Home() {
       return;
     }
 
-    if (file.size > MAX_IMAGE_BYTES) {
+    // ★ 원본 크기로 거절하지 않는다.
+    // 전송 전에 1024px로 줄이므로 원본이 크다고 문제될 것이 없는데, 예전에 여기서 4MB로
+    // 막는 바람에 요즘 휴대폰 사진(보통 3~12MB)이 전부 거절됐다.
+    // 여기 상한은 브라우저 메모리를 지키기 위한 안전장치일 뿐이다.
+    if (file.size > MAX_SOURCE_IMAGE_BYTES) {
       setView({
         phase: 'error',
         code: 'IMAGE_TOO_LARGE',
-        message: '이미지 용량이 너무 큽니다. 4MB 이하의 사진을 선택해주세요.',
+        message: '사진 파일이 너무 큽니다. 25MB 이하의 사진을 선택해주세요.',
       });
       return;
     }
@@ -63,6 +68,16 @@ export default function Home() {
     // 축소에 실패하면 원본을 그대로 쓴다(헬퍼가 알아서 되돌린다).
     fileToUploadDataUrl(file)
       .then((dataUrl) => {
+        // 축소했는데도 전송 상한을 넘으면 그때 거절한다 (서버도 같은 기준으로 막는다).
+        // base64는 원본보다 약 4/3 커지므로 그만큼 감안해 비교한다.
+        if (dataUrl.length * 0.75 > MAX_IMAGE_BYTES) {
+          setView({
+            phase: 'error',
+            code: 'IMAGE_TOO_LARGE',
+            message: '사진을 줄였는데도 용량이 큽니다. 다른 사진으로 시도해 주세요.',
+          });
+          return;
+        }
         setPreview(dataUrl);
         setView({ phase: 'idle' });
       })
