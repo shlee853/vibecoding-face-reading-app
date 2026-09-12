@@ -1,0 +1,17 @@
+# 배포 자동화에 필요한 최소 권한
+#
+# 서버에 둘 위치: /etc/sudoers.d/face-reading
+# 설치:
+#   sudo install -m 440 -o root -g root ~/sudoers-face-reading /etc/sudoers.d/face-reading
+#   sudo visudo -c        # 문법 검사 — 반드시 확인하세요
+#
+# 왜 필요한가: GitHub Actions가 SSH로 붙어 배포한 뒤 서비스를 재시작해야 하는데,
+# 대화형 비밀번호 입력이 불가능합니다. 그렇다고 전체 sudo를 열면 배포 키가 유출됐을 때
+# 서버 전체를 잃습니다.
+#
+# 그래서 **이 서비스에 필요한 명령만** 비밀번호 없이 허용합니다.
+# 배포 키로 할 수 있는 일이 딱 이만큼으로 제한됩니다.
+
+ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl restart face-reading
+ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl status face-reading
+ubuntu ALL=(root) NOPASSWD: /usr/bin/journalctl -u face-reading *

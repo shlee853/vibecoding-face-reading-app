@@ -17,10 +17,15 @@ cd "$(dirname "$0")/.."
 BUNDLE_DIR=".next/standalone"
 ARTIFACT="deploy-bundle.tar.gz"
 
+# 빌드에 버전을 박아 헬스체크로 "서버에 무엇이 올라가 있는지" 확인할 수 있게 한다.
+# CI가 이미 넘겨줬으면 그 값을 쓰고, 로컬 실행이면 현재 커밋에서 뽑는다.
+export APP_VERSION="${APP_VERSION:-$(git rev-parse HEAD 2>/dev/null || echo local)}"
+export APP_BUILT_AT="${APP_BUILT_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+
 echo "==> 이전 산출물 정리"
 rm -rf .next "$ARTIFACT"
 
-echo "==> 프로덕션 빌드"
+echo "==> 프로덕션 빌드 (version=${APP_VERSION:0:12})"
 npx next build
 
 echo "==> standalone 에 static / public 채워넣기"

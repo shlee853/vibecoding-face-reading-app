@@ -1,0 +1,113 @@
+name: 배포
+
+# main에 푸시하면 검증 → 빌드 → 서버 반영까지 자동으로 이어진다.
+# 수동으로 돌리고 싶으면 Actions 탭에서 "Run workflow".
+on:
+  push:
+    branches: [main]
+    # 코드와 무관한 변경으로 배포가 도는 것을 막는다.
+    paths-ignore:
+      - '**.md'
+      - 'planning/**'
+      - '.orchestrator/**'
+  workflow_dispatch:
+
+# 배포가 겹치면 서버 파일이 뒤엉킨다. 한 번에 하나만 돈다.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: 검증
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: 타입 검사
+        run: npx tsc --noEmit
+
+      - name: 단위 테스트
+        run: npm test
+
+  deploy:
+    name: 배포
+    needs: verify        # 검증을 통과해야만 배포한다
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: 배포 설정 확인
+        id: cfg
+        run: |
+          if [ -n "${{ secrets.DEPLOY_HOST }}" ] && [ -n "${{ secrets.DEPLOY_SSH_KEY }}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::배포 시크릿(DEPLOY_HOST / DEPLOY_SSH_KEY)이 아직 없어 배포를 건너뜁니다. 설정 방법은 DEPLOY.md 참고."
+          fi
+
+      - name: 의존성 설치
+        if: steps.cfg.outputs.ready == 'true'
+        run: npm ci
+
+      - name: 번들 빌드
+        if: steps.cfg.outputs.ready == 'true'
+        # 러너가 linux/x64라 서버와 아키텍처가 같다. 개발 기계(arm64 Mac)보다 안전하다.
+        env:
+          APP_VERSION: ${{ github.sha }}
+        run: |
+          export APP_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ./scripts/build-deploy.sh
+
+      - name: SSH 키 준비
+        if: steps.cfg.outputs.ready == 'true'
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: 서버로 전송
+        if: steps.cfg.outputs.ready == 'true'
+        run: |
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            deploy-bundle.tar.gz deploy/remote-install.sh \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:~/"
+
+      - name: 설치 (실패 시 자동 롤백)
+        if: steps.cfg.outputs.ready == 'true'
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            'chmod +x ~/remote-install.sh && ~/remote-install.sh'
+
+      - name: 배포된 버전 확인
+        if: steps.cfg.outputs.ready == 'true'
+        # 서버가 정말 이번 커밋을 돌리고 있는지 밖에서 검증한다.
+        run: |
+          sleep 3
+          BODY=$(curl -sf --max-time 20 "https://${{ secrets.DEPLOY_DOMAIN }}/api/health")
+          echo "$BODY"
+          echo "$BODY" | grep -q '"version":"${{ github.sha }}"' \
+            || { echo "배포된 버전이 이번 커밋과 다릅니다"; exit 1; }
+          echo "$BODY" | grep -q '"ok":true' \
+            || { echo "헬스체크가 정상이 아닙니다"; exit 1; }
+          echo "✅ ${{ github.sha }} 배포 확인"
+
+      - name: 정리
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

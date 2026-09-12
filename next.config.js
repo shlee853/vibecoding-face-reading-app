@@ -14,6 +14,18 @@ const nextConfig = {
 
   // 배포 산출물에 소스맵을 넣지 않는다 (용량과 노출 최소화).
   productionBrowserSourceMaps: false,
+
+  /**
+   * 빌드 시점에 버전을 박아 넣는다.
+   *
+   * 왜: 서버에 어떤 코드가 올라가 있는지 밖에서 알 방법이 없으면, 고친 게 반영됐는지
+   * 매번 추측하게 된다. 실제로 "키 검증 수정이 서버에 있나?"를 확인할 수 없어 곤란했다.
+   * 헬스체크가 커밋 해시를 알려주면 그 질문이 사라진다.
+   */
+  env: {
+    APP_VERSION: process.env.APP_VERSION || 'dev',
+    APP_BUILT_AT: process.env.APP_BUILT_AT || new Date().toISOString(),
+  },
 }
 
 module.exports = nextConfig

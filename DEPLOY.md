@@ -206,20 +206,108 @@ curl -s https://168-107-8-13.sslip.io/api/health
 
 ---
 
-## 갱신하기
+## 자동 배포 (GitHub Actions) — 권장
 
-코드를 고친 뒤:
+설정을 마치면 **`main`에 푸시하는 것만으로 서버까지 자동 반영**됩니다.
+`scp`를 직접 칠 일이 없어집니다.
+
+```
+git push  →  타입검사 + 테스트  →  빌드  →  서버 전송  →  재시작  →  버전 확인
+                     ↓ 실패하면                              ↓ 헬스체크 실패하면
+                   배포 안 함                              이전 버전으로 자동 롤백
+```
+
+### 왜 이 방식인가
+
+- **검증을 통과해야만 배포됩니다.** 타입 오류나 테스트 실패가 있으면 서버에 올라가지 않습니다.
+- **빌드를 GitHub 러너(linux/x64)에서 합니다.** 서버와 아키텍처가 같아 개발 기계(arm64 Mac)에서
+  빌드하는 것보다 안전하고, 956Mi 서버에서 빌드하지 않아도 됩니다.
+- **실패하면 되돌립니다.** 새 버전이 헬스체크를 통과하지 못하면 이전 버전으로 자동 복구합니다.
+- **배포된 버전을 밖에서 확인합니다.** `/api/health`의 `version`이 커밋 해시와 일치하는지 검사합니다.
+
+### 설정 1 — 배포 전용 SSH 키 만들기 (로컬에서)
+
+평소 접속용 키를 재사용하지 마세요. **배포 전용 키를 따로** 만들어 권한 범위를 좁힙니다.
+
+```bash
+ssh-keygen -t ed25519 -C "github-actions-deploy" -f ~/.ssh/deploy_face_reading -N ""
+```
+
+### 설정 2 — 공개키를 서버에 등록 (로컬에서)
+
+```bash
+ssh-copy-id -i ~/.ssh/deploy_face_reading.pub -o IdentityFile=~/.ssh/oracle_face_reading ubuntu@168.107.8.13
+```
+
+`ssh-copy-id`가 없으면:
+
+```bash
+cat ~/.ssh/deploy_face_reading.pub | ssh -i ~/.ssh/oracle_face_reading ubuntu@168.107.8.13 'cat >> ~/.ssh/authorized_keys'
+```
+
+### 설정 3 — 재시작 권한 열기 (서버에서)
+
+Actions가 비밀번호 없이 서비스를 재시작해야 합니다. **전체 sudo를 열지 않고 필요한 명령만** 허용합니다.
+
+```bash
+sudo tee /etc/sudoers.d/face-reading > /dev/null <<'EOF'
+ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl restart face-reading
+ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl status face-reading
+ubuntu ALL=(root) NOPASSWD: /usr/bin/journalctl -u face-reading *
+EOF
+sudo chmod 440 /etc/sudoers.d/face-reading
+sudo visudo -c          # "parsed OK" 가 나와야 합니다
+```
+
+### 설정 4 — GitHub에 시크릿 등록 (브라우저에서)
+
+저장소 → **Settings → Secrets and variables → Actions → New repository secret** 에서 4개를 만듭니다.
+
+| 이름 | 값 |
+|---|---|
+| `DEPLOY_HOST` | `168.107.8.13` |
+| `DEPLOY_USER` | `ubuntu` |
+| `DEPLOY_DOMAIN` | `168-107-8-13.sslip.io` |
+| `DEPLOY_SSH_KEY` | `~/.ssh/deploy_face_reading` **개인키 전문** |
+
+개인키를 클립보드로 복사하려면:
+
+```bash
+pbcopy < ~/.ssh/deploy_face_reading
+```
+
+> `-----BEGIN OPENSSH PRIVATE KEY-----` 부터 `-----END OPENSSH PRIVATE KEY-----` 까지
+> **줄바꿈을 포함해 전부** 붙여넣으세요. 마지막 줄바꿈이 빠지면 인증이 실패합니다.
+
+### 설정 5 — 동작 확인
+
+아무 커밋이나 푸시하거나, 저장소의 **Actions 탭 → 배포 → Run workflow** 를 누릅니다.
+"배포된 버전 확인" 단계에서 `✅ <커밋해시> 배포 확인` 이 나오면 완료입니다.
+
+> 시크릿을 설정하기 전에도 워크플로는 돕니다 — 검증만 하고 배포는 건너뛰며,
+> 빨간 실패로 표시되지 않습니다.
+
+---
+
+## 수동 배포 (자동 배포를 쓰지 않을 때)
 
 ```bash
 # 로컬
 ./scripts/build-deploy.sh
-scp -i ~/.ssh/oracle_face_reading deploy-bundle.tar.gz ubuntu@168.107.8.13:~/
+scp -i ~/.ssh/oracle_face_reading deploy-bundle.tar.gz deploy/remote-install.sh ubuntu@168.107.8.13:~/
 
-# 서버
-rm -rf ~/face-reading && mkdir -p ~/face-reading
-tar -xzf ~/deploy-bundle.tar.gz -C ~/face-reading
-sudo systemctl restart face-reading
+# 서버 — 검증과 롤백이 포함된 설치 스크립트를 씁니다
+chmod +x ~/remote-install.sh && ~/remote-install.sh
 ```
+
+## 무엇이 배포되어 있는지 확인하기
+
+```bash
+curl -s https://168-107-8-13.sslip.io/api/health
+```
+
+`version` 필드가 배포된 커밋 해시입니다. 로컬의 `git rev-parse HEAD` 와 비교하면
+고친 내용이 반영됐는지 바로 알 수 있습니다.
 
 ## 로그 보기
 

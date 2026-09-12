@@ -24,6 +24,9 @@ export function GET() {
       ok: key.ok,
       apiKey: key.ok ? 'configured' : key.reason,
       ...(key.ok ? {} : { apiKeyDetail: key.detail }),
+      // 어떤 코드가 돌고 있는지 밖에서 확인할 수 있어야 한다 — 빌드 시점에 박힌 값이다.
+      version: process.env.APP_VERSION ?? 'unknown',
+      builtAt: process.env.APP_BUILT_AT ?? 'unknown',
       uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
       node: process.version,
       env: process.env.NODE_ENV ?? 'unknown',
