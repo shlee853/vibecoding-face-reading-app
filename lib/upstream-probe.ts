@@ -22,12 +22,19 @@ export interface UpstreamProbeResult {
   detail: string;
   /** 조회에 성공했을 때 보이는 모델 수 */
   modelCount?: number;
+  /** 우리가 실제로 쓰는 모델이 이 키로 접근 가능한가 */
+  targetModel?: { name: string; available: boolean; supportsGenerate: boolean };
+  /** 진단용 — 실제로 쓸 수 있는 모델 이름 몇 개 */
+  sampleModels?: string[];
 }
 
 const MODELS_URL = 'https://generativelanguage.googleapis.com/v1/models';
 const PROBE_TIMEOUT_MS = 10_000;
 
-export async function probeUpstream(apiKey: string): Promise<UpstreamProbeResult> {
+export async function probeUpstream(
+  apiKey: string,
+  targetModelName?: string
+): Promise<UpstreamProbeResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
 
@@ -41,18 +48,52 @@ export async function probeUpstream(apiKey: string): Promise<UpstreamProbeResult
 
     if (res.ok) {
       let modelCount: number | undefined;
+      let targetModel: UpstreamProbeResult['targetModel'];
+      let sampleModels: string[] | undefined;
+
       try {
-        const body = JSON.parse(text) as { models?: unknown[] };
-        modelCount = Array.isArray(body.models) ? body.models.length : undefined;
+        const body = JSON.parse(text) as {
+          models?: Array<{ name?: string; supportedGenerationMethods?: string[] }>;
+        };
+        const models = Array.isArray(body.models) ? body.models : [];
+        modelCount = models.length;
+
+        // 생성이 가능한 모델만 추린다 — 임베딩 전용 모델은 분석에 쓸 수 없다.
+        const generative = models
+          .filter((m) => m.supportedGenerationMethods?.includes('generateContent'))
+          .map((m) => (m.name ?? '').replace(/^models\//, ''))
+          .filter(Boolean);
+        sampleModels = generative.slice(0, 12);
+
+        if (targetModelName) {
+          const hit = models.find(
+            (m) => (m.name ?? '').replace(/^models\//, '') === targetModelName
+          );
+          targetModel = {
+            name: targetModelName,
+            available: Boolean(hit),
+            supportsGenerate: Boolean(hit?.supportedGenerationMethods?.includes('generateContent')),
+          };
+        }
       } catch {
         /* 본문 형식이 달라도 200이면 인증은 통과한 것이다 */
       }
+
+      const modelProblem =
+        targetModel && (!targetModel.available || !targetModel.supportsGenerate);
+
       return {
         reachable: true,
         authenticated: true,
         status: res.status,
-        detail: '정상 — 네트워크와 키 모두 문제없습니다.',
+        detail: modelProblem
+          ? `키와 네트워크는 정상인데 **모델 "${targetModel!.name}" 을 쓸 수 없습니다** ` +
+            `(존재: ${targetModel!.available}, 생성지원: ${targetModel!.supportsGenerate}). ` +
+            `sampleModels 목록에서 쓸 수 있는 이름으로 바꿔야 합니다.`
+          : '정상 — 네트워크와 키 모두 문제없습니다.',
         modelCount,
+        targetModel,
+        sampleModels,
       };
     }
 

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { validateApiKey } from '@/lib/apikey';
 import { probeUpstream } from '@/lib/upstream-probe';
+import { MODEL_NAME } from '@/lib/gemini';
 
 /**
  * 배포된 서버가 살아 있고 제대로 설정됐는지 확인하는 엔드포인트.
@@ -54,7 +55,7 @@ export async function GET(request: NextRequest) {
   lastDeepProbeAt = now;
 
   // 모델 목록 조회라 토큰 비용이 들지 않는다.
-  const upstream = await probeUpstream(process.env.GEMINI_API_KEY as string);
+  const upstream = await probeUpstream(process.env.GEMINI_API_KEY as string, MODEL_NAME);
 
   return NextResponse.json(
     { ...base, ok: base.ok && upstream.authenticated, upstream },

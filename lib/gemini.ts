@@ -11,7 +11,7 @@ export interface AnalyzeOptions {
 }
 import type { ParseResult, VisionClient } from './types';
 
-const MODEL_NAME = 'gemini-3.6-flash';
+export const MODEL_NAME = 'gemini-3.6-flash';
 
 /**
  * 출력 상한.
