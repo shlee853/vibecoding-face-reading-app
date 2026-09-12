@@ -77,8 +77,16 @@ jobs:
         if: steps.cfg.outputs.ready == 'true'
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          # printf로 쓰고 끝 줄바꿈을 보장한다.
+          # OpenSSH 개인키는 마지막 줄바꿈이 없으면 "invalid format"으로 거부된다 —
+          # 시크릿 붙여넣기에서 가장 흔히 깨지는 지점이다.
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+
+          # 키가 제대로 들어갔는지 먼저 확인한다. 여기서 실패하면 원인이 분명해진다.
+          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null \
+            || { echo "DEPLOY_SSH_KEY 시크릿이 올바른 개인키가 아닙니다. BEGIN~END 전문을 줄바꿈 포함해 붙여넣었는지 확인하세요."; exit 1; }
+
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: 서버로 전송
