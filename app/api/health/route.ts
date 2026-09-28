@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { validateApiKey } from '@/lib/apikey';
 import { probeUpstream, probeGenerate } from '@/lib/upstream-probe';
-import { MODEL_NAME } from '@/lib/gemini';
+import { AI_PROVIDER, MODEL_NAME } from '@/lib/gemini';
 
 /**
  * 배포된 서버가 살아 있고 제대로 설정됐는지 확인하는 엔드포인트.
@@ -22,6 +22,24 @@ const DEEP_PROBE_MIN_INTERVAL_MS = 10_000;
 let lastDeepProbeAt = 0;
 
 export async function GET(request: NextRequest) {
+  // Ollama(로컬 전용)는 인증이 없다 — 키 형식 검증 대상 자체가 없으므로 항상 정상으로 본다.
+  if (AI_PROVIDER === 'ollama') {
+    return NextResponse.json(
+      {
+        ok: true,
+        apiKey: 'not-required',
+        provider: 'ollama',
+        model: MODEL_NAME,
+        version: process.env.APP_VERSION ?? 'unknown',
+        builtAt: process.env.APP_BUILT_AT ?? 'unknown',
+        uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
+        node: process.version,
+        env: process.env.NODE_ENV ?? 'unknown',
+      },
+      { status: 200 }
+    );
+  }
+
   // 값의 존재만 보지 않고 **형식까지** 본다.
   // 예전에 자리표시자(한글)가 그대로 들어간 상태에서 "configured"라고 보고해
   // 모든 분석이 실패하는 동안 문제를 가린 적이 있다.

@@ -11,17 +11,30 @@ export interface AnalyzeOptions {
 import type { ParseResult, VisionClient } from './types';
 
 /**
- * OpenRouter를 통해 Gemma 4 26B A4B(무료 티어)를 쓴다.
+ * 두 개의 provider를 쓴다:
  *
- * Google Gemini API/Vertex AI로는 키 유효성·결재·조직 정책(서비스 계정 키 차단) 문제를
- * 넘지 못해, 라이센스가 명확한(Apache 2.0) 오픈 모델로 갈아탔다.
+ * - **OpenRouter**(기본, 운영 서버): Gemma 4 26B A4B 무료 티어. Google Gemini API/
+ *   Vertex AI는 키 유효성·결재·조직 정책(서비스 계정 키 차단) 문제를 넘지 못해,
+ *   라이센스가 명확한(Apache 2.0) 오픈 모델로 갈아탔다.
+ *   ⚠️ 무료 티어(`:free`)는 요청 데이터가 로깅·모델 개선에 쓰일 수 있다. 이 앱은
+ *   사용자 얼굴 사진을 보낸다 — 운영 전 OpenRouter의 데이터 정책을 다시 확인할 것.
  *
- * ⚠️ 무료 티어(`:free`) 주의: 요청 데이터가 OpenRouter/업스트림 프로바이더의 로깅·모델
- * 개선에 쓰일 수 있다. 이 앱은 사용자 얼굴 사진을 보낸다 — 운영 전 OpenRouter의 데이터
- * 정책을 다시 확인하고, 필요하면 유료 티어(데이터 미보존)로 바꿀 것.
+ * - **Ollama**(로컬 개발 전용): OpenRouter 무료 티어의 공유 풀 rate limit이 개발 중
+ *   반복 테스트를 막아서, 로컬에서만 `AI_PROVIDER=ollama`로 우회할 수 있게 했다.
+ *   **운영 서버에는 절대 쓰지 않는다** — 개인 PC가 24시간 켜져 있어야 하고, 인증 없는
+ *   Ollama API를 인터넷에 노출해야 해서 보안·가용성 모두 부적합하다.
  */
-export const MODEL_NAME = 'google/gemma-4-26b-a4b-it:free';
+export const AI_PROVIDER = (process.env.AI_PROVIDER === 'ollama' ? 'ollama' : 'openrouter') as
+  | 'openrouter'
+  | 'ollama';
+
+export const MODEL_NAME =
+  AI_PROVIDER === 'ollama'
+    ? process.env.OLLAMA_MODEL || 'gemma4:12b'
+    : 'google/gemma-4-26b-a4b-it:free';
+
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 
 /**
  * 출력 상한.
@@ -39,8 +52,12 @@ const RETRY_PER_PART = 2;
  *
  * 25초로 뒀다가 정상 분석까지 잘라버렸다 — Gemini 비전 호출은 부하에 따라 편차가 크고
  * 관측된 값만 해도 15.9초였다. 상한은 "비정상을 끊는" 값이어야지 "정상을 자르는" 값이면 안 된다.
+ *
+ * 로컬 Ollama(gemma4:12b)는 API 호출보다 훨씬 느리다 — CPU/GPU로 직접 추론하므로
+ * 관상+운세처럼 긴 JSON 출력은 90초를 넘기기 쉽다(실측: 짧은 인사말도 1.5~17초).
+ * 90초는 이 경우 "정상을 자르는" 값이라 5분으로 올린다.
  */
-const REQUEST_TIMEOUT_MS = 90_000;
+const REQUEST_TIMEOUT_MS = 300_000;
 
 class SafetyBlockedError extends Error {
   constructor(detail: string) {
@@ -72,8 +89,78 @@ interface OpenRouterResponse {
   error?: { message?: string; code?: number };
 }
 
-/** 실제 OpenRouter(Gemma 4 26B A4B)에 연결된 VisionClient를 만든다. 절대 테스트에서 호출하지 않는다. */
+interface OllamaChatResponse {
+  message?: { content?: string | null };
+  done?: boolean;
+  done_reason?: string | null;
+  error?: string;
+}
+
+/** 실제 Vision 모델(OpenRouter 또는 Ollama)에 연결된 VisionClient를 만든다. 절대 테스트에서 호출하지 않는다. */
 export function createGeminiClient(apiKey: string): VisionClient {
+  return AI_PROVIDER === 'ollama' ? createOllamaClient() : createOpenRouterClient(apiKey);
+}
+
+/** 로컬 Ollama(gemma4:12b 등)에 연결된 VisionClient. 인증이 없으므로 apiKey를 받지 않는다. */
+function createOllamaClient(): VisionClient {
+  return {
+    async generate(input) {
+      const response = await withTimeout(
+        fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: MODEL_NAME,
+            messages: [
+              {
+                role: 'user',
+                content: input.prompt,
+                // Ollama는 base64 이미지를 문자열 배열로 받는다 (data URL 접두사 없이).
+                images: [input.base64],
+              },
+            ],
+            stream: false,
+            // gemma4는 기본으로 "thinking"(응답 전 사고 과정)을 생성한다 — 간단한 인사말도
+            // 16초 이상 걸리게 만드는 주범이라(로컬 실측: think 켬 16.8초 → 끔 1.5초) 끈다.
+            // 이 앱은 형식화된 JSON 출력만 필요하지 추론 과정 자체가 목적이 아니다.
+            think: false,
+            options: {
+              num_predict: MAX_OUTPUT_TOKENS,
+              temperature: 0.7,
+            },
+          }),
+        }),
+        REQUEST_TIMEOUT_MS
+      );
+
+      if (!response.ok) {
+        const bodyText = await response.text().catch(() => '');
+        throw new Error(`[${response.status}] Ollama error: ${bodyText.slice(0, 500)}`);
+      }
+
+      const json = (await response.json()) as OllamaChatResponse;
+
+      if (json.error) {
+        throw new Error(`Ollama error: ${json.error}`);
+      }
+
+      const text = json.message?.content ?? '';
+
+      if (!text) {
+        throw new Error('Ollama returned empty response');
+      }
+
+      if (json.done_reason === 'length') {
+        throw new Error(`Gemma response truncated at num_predict (${MAX_OUTPUT_TOKENS})`);
+      }
+
+      return text;
+    },
+  };
+}
+
+/** 실제 OpenRouter(Gemma 4 26B A4B)에 연결된 VisionClient를 만든다. */
+function createOpenRouterClient(apiKey: string): VisionClient {
   return {
     async generate(input) {
       const response = await withTimeout(

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateImageDataUrl } from '@/lib/image';
-import { createGeminiClient, analyzeFace } from '@/lib/gemini';
+import { AI_PROVIDER, createGeminiClient, analyzeFace } from '@/lib/gemini';
 import { validateApiKey } from '@/lib/apikey';
 import { classifyUpstreamError, isRetryableCode, toErrorResponse } from '@/lib/errors';
 import {
@@ -23,8 +23,12 @@ const MAX_ATTEMPTS = 2;
 /**
  * 재시도를 포함해 이 요청에 쓸 수 있는 전체 시간.
  * 재시도가 사용자를 무한정 기다리게 하면 오류보다 나쁜 경험이 된다.
+ *
+ * lib/gemini.ts의 REQUEST_TIMEOUT_MS(5분, 로컬 Ollama 기준)보다 작으면 1차 시도조차
+ * 끝까지 기다리지 못하고 재시도 판단 로직이 무의미해진다 — 최소 1회 완주 + 약간의
+ * 재시도 여유를 두고 350초로 맞춘다.
  */
-const TOTAL_BUDGET_MS = 110_000;
+const TOTAL_BUDGET_MS = 350_000;
 
 /**
  * 다음 시도까지 기다리는 시간. 요청량 초과와 업스트림 혼잡은 더 기다려야 풀린다.
@@ -97,16 +101,20 @@ export async function POST(request: NextRequest): Promise<NextResponse<AnalyzeRe
     return NextResponse.json(body, { status });
   }
 
-  // 키 형식을 **부르기 전에** 본다. 헤더에 못 싣는 문자가 섞여 있으면 요청이 만들어지지도
-  // 않는데, 그걸 모르고 재시도까지 하면 실패가 뻔한 호출을 네 번 반복하게 된다.
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  const keyCheck = validateApiKey(apiKey);
-  if (!keyCheck.ok) {
-    console.error(`[analyze] API 키 설정 문제 (${keyCheck.reason}): ${keyCheck.detail}`);
-    const { body, status } = toErrorResponse(
-      keyCheck.reason === 'missing' ? 'NO_API_KEY' : 'INVALID_API_KEY'
-    );
-    return NextResponse.json(isDev ? { ...body, detail: keyCheck.detail } : body, { status });
+  // Ollama(로컬 전용)는 인증이 없으므로 키 검증 자체가 무의미하다.
+  let apiKey: string | undefined;
+  if (AI_PROVIDER !== 'ollama') {
+    // 키 형식을 **부르기 전에** 본다. 헤더에 못 싣는 문자가 섞여 있으면 요청이 만들어지지도
+    // 않는데, 그걸 모르고 재시도까지 하면 실패가 뻔한 호출을 네 번 반복하게 된다.
+    apiKey = process.env.OPENROUTER_API_KEY;
+    const keyCheck = validateApiKey(apiKey);
+    if (!keyCheck.ok) {
+      console.error(`[analyze] API 키 설정 문제 (${keyCheck.reason}): ${keyCheck.detail}`);
+      const { body, status } = toErrorResponse(
+        keyCheck.reason === 'missing' ? 'NO_API_KEY' : 'INVALID_API_KEY'
+      );
+      return NextResponse.json(isDev ? { ...body, detail: keyCheck.detail } : body, { status });
+    }
   }
 
   const client = createGeminiClient(apiKey as string);
