@@ -112,9 +112,10 @@ free -h                          # Swap 줄에 2.0Gi가 보이면 성공
 
 ## 4. API 키 등록
 
-이 앱은 **OpenRouter**(`google/gemma-4-26b-a4b-it:free`)를 씁니다. Google Gemini API/Vertex AI는
-키 결재·조직 정책(서비스 계정 키 생성 차단) 문제로 막혀, 라이센스가 명확한(Apache 2.0) 오픈
-모델로 전환했습니다.
+이 앱은 **OpenRouter**(`z-ai/glm-5.3-flash`, 유료 티어)를 씁니다. Google Gemini API/Vertex AI는
+키 결재·조직 정책(서비스 계정 키 생성 차단) 문제로 막혀 OpenRouter로 전환했고, 무료 티어
+(Gemma 4 26B A4B)는 전 세계 사용자가 공유하는 풀이라 rate limit이 반복돼 유료 모델로
+바꿨습니다. OpenRouter 계정에 결제 수단이 등록되어 있어야 합니다.
 
 ```bash
 sudo install -m 600 -o ubuntu -g ubuntu /dev/null /etc/face-reading.env
@@ -130,10 +131,9 @@ OPENROUTER_API_KEY=여기에_실제_키
 > 권한을 600으로 두는 이유: 다른 사용자가 읽지 못하게 하기 위함입니다.
 > **이 파일은 절대 git에 올리지 마세요.**
 
-> ⚠️ **무료 티어(`:free`) 데이터 정책**: 무료 모델은 요청 데이터가 로깅되거나 모델 개선에
-> 쓰일 수 있습니다. 이 앱은 **사용자 얼굴 사진**을 보냅니다. 실제 서비스로 운영하기 전
+> ⚠️ **데이터 정책 확인**: 이 앱은 **사용자 얼굴 사진**을 보냅니다. 유료 티어라도
 > [OpenRouter의 프라이버시 정책](https://openrouter.ai/docs/features/privacy-and-logging)을
-> 반드시 확인하고, 필요하면 유료 티어(데이터 미보존)로 바꾸세요.
+> 확인해 로깅/보존 설정이 서비스 요구사항에 맞는지 확인하세요.
 
 ## 5. 앱 올리기
 
@@ -338,7 +338,7 @@ sudo journalctl -u face-reading | grep '\[analyze\]'   # 분석 실패 원인만
 | 카메라 탭이 막힘 | HTTPS로 접속했는지 확인 (6단계) |
 | 모든 분석이 "서버가 AI 분석 서비스에 연결하지 못했습니다" | VM에서 외부 HTTPS 아웃바운드가 막힌 것입니다. `curl -I https://openrouter.ai/api/v1/models` 으로 확인 |
 | `"apiKey":"missing"` | `/etc/face-reading.env` 의 `OPENROUTER_API_KEY` 를 확인하고 `sudo systemctl restart face-reading` |
-| 분석이 빈번히 429로 실패 | 무료 티어(`:free`)는 요청 제한이 엄격합니다. `/api/health?deep=2` 로 원인을 확인하고, 트래픽이 늘면 유료 티어 전환을 고려하세요 |
+| 분석이 빈번히 429로 실패 | `/api/health?deep=2` 로 원인을 확인하세요. 유료 티어도 크레딧 소진(402) 또는 계정 단위 요청 제한일 수 있습니다 |
 | **502 Bad Gateway** + 서비스가 `status=203/EXEC` 로 반복 재시작 | **유닛의 node 경로가 틀린 것입니다.** systemd는 로그인 셸의 PATH를 쓰지 않아 node 위치가 apt/nvm에 따라 다릅니다. 아래 한 줄로 고치세요 |
 | 요청 제한에 자꾸 걸림 | nginx가 `X-Forwarded-For` 를 넘기는지 확인. 빠지면 모든 방문자가 한 사람으로 취급됩니다 |
 
@@ -364,6 +364,6 @@ sleep 4 && curl -s http://127.0.0.1:3000/api/health
 - 5분에 5회 (연타 방지)
 - 하루 30회 (IP당 총량)
 
-트래픽을 보고 조절한 뒤 다시 배포하면 됩니다. 무료 티어(`:free`)는 비용은 0원이지만
-요청 제한이 엄격하므로, [OpenRouter 대시보드](https://openrouter.ai/activity)에서
-실제 사용량과 요청 제한 도달 여부를 함께 지켜보세요.
+트래픽을 보고 조절한 뒤 다시 배포하면 됩니다. `z-ai/glm-5.3-flash`는 유료(입력
+$0.045/M, 출력 $0.14/M 토큰)이므로, [OpenRouter 대시보드](https://openrouter.ai/activity)에서
+실제 사용량과 크레딧 소진 여부를 함께 지켜보세요.

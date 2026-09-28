@@ -13,14 +13,13 @@ import type { ParseResult, VisionClient } from './types';
 /**
  * 두 개의 provider를 쓴다:
  *
- * - **OpenRouter**(기본, 운영 서버): Gemma 4 26B A4B 무료 티어. Google Gemini API/
- *   Vertex AI는 키 유효성·결재·조직 정책(서비스 계정 키 차단) 문제를 넘지 못해,
- *   라이센스가 명확한(Apache 2.0) 오픈 모델로 갈아탔다.
- *   ⚠️ 무료 티어(`:free`)는 요청 데이터가 로깅·모델 개선에 쓰일 수 있다. 이 앱은
- *   사용자 얼굴 사진을 보낸다 — 운영 전 OpenRouter의 데이터 정책을 다시 확인할 것.
+ * - **OpenRouter**(기본, 운영 서버): GLM 5.3 Flash 유료 티어(`z-ai/glm-5.3-flash`).
+ *   Google Gemini API/Vertex AI는 키 유효성·결재·조직 정책(서비스 계정 키 차단) 문제를
+ *   넘지 못해 OpenRouter로 갈아탔다. 처음엔 무료 티어(Gemma 4 26B A4B)를 썼지만 전
+ *   세계 사용자가 공유하는 풀이라 rate limit이 반복돼, 결제 기반 유료 모델로 바꿨다.
  *
- * - **Ollama**(로컬 개발 전용): OpenRouter 무료 티어의 공유 풀 rate limit이 개발 중
- *   반복 테스트를 막아서, 로컬에서만 `AI_PROVIDER=ollama`로 우회할 수 있게 했다.
+ * - **Ollama**(로컬 개발 전용): 로컬 반복 테스트 중 OpenRouter 요청을 아끼려고
+ *   로컬에서만 `AI_PROVIDER=ollama`로 우회할 수 있게 했다.
  *   **운영 서버에는 절대 쓰지 않는다** — 개인 PC가 24시간 켜져 있어야 하고, 인증 없는
  *   Ollama API를 인터넷에 노출해야 해서 보안·가용성 모두 부적합하다.
  */
@@ -29,9 +28,7 @@ export const AI_PROVIDER = (process.env.AI_PROVIDER === 'ollama' ? 'ollama' : 'o
   | 'ollama';
 
 export const MODEL_NAME =
-  AI_PROVIDER === 'ollama'
-    ? process.env.OLLAMA_MODEL || 'gemma4:12b'
-    : 'google/gemma-4-26b-a4b-it:free';
+  AI_PROVIDER === 'ollama' ? process.env.OLLAMA_MODEL || 'gemma4:12b' : 'z-ai/glm-5.3-flash';
 
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
@@ -159,7 +156,7 @@ function createOllamaClient(): VisionClient {
   };
 }
 
-/** 실제 OpenRouter(Gemma 4 26B A4B)에 연결된 VisionClient를 만든다. */
+/** 실제 OpenRouter(GLM 5.3 Flash)에 연결된 VisionClient를 만든다. */
 function createOpenRouterClient(apiKey: string): VisionClient {
   return {
     async generate(input) {
@@ -296,9 +293,8 @@ export async function analyzeFace(
       const code = classifyUpstreamError(errors[i]);
       if (!isRetryableCode(code)) break;
 
-      // OpenRouter 무료 티어(google/gemma-4-26b-a4b-it:free)는 전 세계 사용자가 공유하는
-      // 풀이라, 다른 업스트림 혼잡보다 훨씬 오래(수 초~수십 초) 걸려야 풀린다.
-      // 지터를 섞어 재시도가 서로 겹치지 않게 한다.
+      // RATE_LIMITED는 다른 업스트림 혼잡보다 훨씬 오래(수 초~수십 초) 걸려야 풀리는
+      // 경우가 흔하다. 지터를 섞어 재시도가 서로 겹치지 않게 한다.
       const baseMs = code === 'RATE_LIMITED' ? 5000 : 900;
       await sleep(baseMs * (attempt - 1) + Math.floor(Math.random() * 400));
 

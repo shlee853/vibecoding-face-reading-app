@@ -150,16 +150,16 @@ function summarizeOpenRouterError(status: number, body: string): string {
     return `키가 거부됐습니다(HTTP 401). 키 값이 잘못됐거나 만료됐을 수 있습니다. 원문: ${raw}`;
   }
   if (status === 402) {
-    return `크레딧이 부족합니다(HTTP 402). 무료 티어 한도를 다 썼거나 결제가 필요합니다. 원문: ${raw}`;
+    return `크레딧이 부족합니다(HTTP 402). OpenRouter 계정에 결제 수단을 등록하거나 잔액을 충전하세요. 원문: ${raw}`;
   }
   if (status === 403) {
     return `권한이 거부됐습니다(HTTP 403). 키에 제한이 걸려 있거나 이 모델에 접근할 수 없습니다. 원문: ${raw}`;
   }
   if (status === 404) {
-    return `모델을 찾을 수 없습니다(HTTP 404). 모델 이름(예: google/gemma-4-26b-a4b-it:free)을 확인하세요. 원문: ${raw}`;
+    return `모델을 찾을 수 없습니다(HTTP 404). 모델 이름(예: z-ai/glm-5.3-flash)을 확인하세요. 원문: ${raw}`;
   }
   if (status === 429) {
-    return `요청 제한을 초과했습니다(HTTP 429). 무료 티어는 특히 엄격합니다. 원문: ${raw}`;
+    return `요청 제한을 초과했습니다(HTTP 429). 원문: ${raw}`;
   }
   if (status >= 500) {
     return `OpenRouter 쪽 일시적 오류입니다(HTTP ${status}). 원문: ${raw}`;
