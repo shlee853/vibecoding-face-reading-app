@@ -26,9 +26,16 @@ const MAX_ATTEMPTS = 2;
  */
 const TOTAL_BUDGET_MS = 110_000;
 
-/** 다음 시도까지 기다리는 시간. 요청량 초과와 업스트림 혼잡은 더 기다려야 풀린다. */
+/**
+ * 다음 시도까지 기다리는 시간. 요청량 초과와 업스트림 혼잡은 더 기다려야 풀린다.
+ *
+ * RATE_LIMITED를 UPSTREAM_BUSY보다 훨씬 길게 잡는다 — 이 앱이 쓰는
+ * google/gemma-4-26b-a4b-it:free는 OpenRouter 전체 사용자가 공유하는 무료 풀이라,
+ * 혼잡이 몇 초 안에 풀리지 않는 경우가 흔하다.
+ */
 function backoffMs(attempt: number, code: AnalyzeErrorCode): number {
-  const base = code === 'RATE_LIMITED' || code === 'UPSTREAM_BUSY' ? 2000 : 600;
+  if (code === 'RATE_LIMITED') return 8000 * attempt;
+  const base = code === 'UPSTREAM_BUSY' ? 2000 : 600;
   return base * attempt;
 }
 
@@ -92,7 +99,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<AnalyzeRe
 
   // 키 형식을 **부르기 전에** 본다. 헤더에 못 싣는 문자가 섞여 있으면 요청이 만들어지지도
   // 않는데, 그걸 모르고 재시도까지 하면 실패가 뻔한 호출을 네 번 반복하게 된다.
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.OPENROUTER_API_KEY;
   const keyCheck = validateApiKey(apiKey);
   if (!keyCheck.ok) {
     console.error(`[analyze] API 키 설정 문제 (${keyCheck.reason}): ${keyCheck.detail}`);

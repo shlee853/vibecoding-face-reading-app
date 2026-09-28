@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
   // 값의 존재만 보지 않고 **형식까지** 본다.
   // 예전에 자리표시자(한글)가 그대로 들어간 상태에서 "configured"라고 보고해
   // 모든 분석이 실패하는 동안 문제를 가린 적이 있다.
-  const key = validateApiKey(process.env.GEMINI_API_KEY);
+  const key = validateApiKey(process.env.OPENROUTER_API_KEY);
 
   const base = {
     ok: key.ok,
@@ -55,10 +55,10 @@ export async function GET(request: NextRequest) {
   }
   lastDeepProbeAt = now;
 
-  const apiKey = process.env.GEMINI_API_KEY as string;
+  const apiKey = process.env.OPENROUTER_API_KEY as string;
 
-  // 모델 목록 조회라 토큰 비용이 들지 않는다.
-  const upstream = await probeUpstream(apiKey, MODEL_NAME);
+  // 키 상태 조회라 토큰 비용이 들지 않는다.
+  const upstream = await probeUpstream(apiKey);
 
   // deep=2 는 생성 엔드포인트까지 최소 규모로 찔러본다.
   // 목록 조회만으로는 잡히지 않는 권한·할당량 문제가 여기서 드러난다.

@@ -32,7 +32,7 @@ export function validateApiKey(raw: string | undefined | null): ApiKeyStatus {
   const key = (raw ?? '').trim();
 
   if (key.length === 0) {
-    return { ok: false, reason: 'missing', detail: 'GEMINI_API_KEY가 설정되지 않았습니다.' };
+    return { ok: false, reason: 'missing', detail: 'OPENROUTER_API_KEY가 설정되지 않았습니다.' };
   }
 
   // ★ 가장 중요한 검사. 헤더에 못 싣는 문자가 있으면 호출 자체가 불가능하다.
@@ -55,7 +55,7 @@ export function validateApiKey(raw: string | undefined | null): ApiKeyStatus {
     };
   }
 
-  // 실제 Gemini 키는 30자를 훌쩍 넘는다. 짧으면 잘못 붙여넣은 것이다.
+  // 실제 OpenRouter 키(sk-or-v1-...)는 30자를 훌쩍 넘는다. 짧으면 잘못 붙여넣은 것이다.
   if (key.length < 20) {
     return {
       ok: false,
