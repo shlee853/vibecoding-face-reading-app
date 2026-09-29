@@ -29,7 +29,6 @@ export default function Home() {
   const [view, setView] = useState<View>({ phase: 'idle' });
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const resultRef = useRef<HTMLDivElement>(null);
 
   /** 마운트 시 저장된 결과가 있으면 복원한다. 렌더 중이 아닌 effect 안에서만 window를 만진다 (E5). */
   useEffect(() => {
@@ -146,14 +145,14 @@ export default function Home() {
     setView({ phase: 'idle' });
   };
 
-  /** 결과 DOM을 그대로 캡처해 PDF로 내려받는다. 화면에 보이는 것과 동일하게 나온다. */
+  /** 결과 데이터를 pdf-lib으로 직접 그려 PDF로 내려받는다(화면 캡처가 아니다). */
   const handleExportPdf = async () => {
-    if (!resultRef.current || isExportingPdf) return;
+    if (view.phase !== 'result' || isExportingPdf) return;
 
     setIsExportingPdf(true);
     try {
       const today = new Date().toISOString().slice(0, 10);
-      await exportResultAsPdf(resultRef.current, `관상사주_분석결과_${today}.pdf`);
+      await exportResultAsPdf(view.result, preview, `관상사주_분석결과_${today}.pdf`);
     } catch {
       // PDF 생성 실패로 화면의 결과(정상 데이터)까지 날릴 이유는 없다 — 조용히 알리기만 한다.
       window.alert('PDF를 만드는 데 실패했습니다. 잠시 후 다시 시도해주세요.');
@@ -190,12 +189,7 @@ export default function Home() {
               {view.restored && (
                 <p className="text-center text-gray-400 text-xs">이전에 본 결과입니다</p>
               )}
-              <div
-                ref={resultRef}
-                className="bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 rounded-xl p-4"
-              >
-                <ResultView preview={preview} result={view.result} />
-              </div>
+              <ResultView preview={preview} result={view.result} />
               <div className="flex flex-col sm:flex-row gap-3">
                 <button
                   onClick={handleExportPdf}

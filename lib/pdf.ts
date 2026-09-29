@@ -1,158 +1,480 @@
 /**
- * 분석 결과 DOM을 PDF로 저장한다. 브라우저에서만 동작한다(서버 렌더링 대상 아님).
+ * 분석 결과를 PDF로 저장한다. 브라우저에서만 동작한다(서버 렌더링 대상 아님).
  *
- * 구조화된 텍스트로 직접 그리지 않고 **DOM을 이미지로 캡처**하는 방식을 쓴다 — 이유는
- * jsPDF의 기본 폰트가 한글을 지원하지 않아, 직접 그리려면 폰트를 통째로 번들에 넣어야
- * 한다. 화면에 이미 브라우저가 올바르게 렌더링한 한글이 있으니 그걸 그대로 캡처하는
- * 편이 가볍고 화면과 100% 동일한 결과를 보장한다.
- *
- * 전체를 한 장의 캔버스로 찍어 페이지 높이만큼 기계적으로 잘라 배치하면, 문단 중간이나
- * 카드 경계 한복판에서 페이지가 끊긴다. 대신 결과 화면의 각 카드에 붙은
- * `data-pdf-section` 마커 단위로 따로 캡처해, 카드를 통째로 다음 페이지로 넘기는
- * 방식으로 조립한다 — 카드 하나가 꽉 찬 한 페이지보다 긴 드문 경우에만 어쩔 수 없이
- * 그 카드만 잘라 찍는다.
+ * 화면 DOM을 캡처하는 대신 **pdf-lib로 텍스트·이미지를 직접 그린다**. 이전 버전은
+ * html2canvas로 화면을 스크린샷했는데, 두 가지 문제가 있었다:
+ *  1) html2canvas가 Tailwind의 최신 `rgb(r g b/var(...))` 색상 문법을 파싱하지 못해
+ *     텍스트가 검정으로 나왔다(모니터 화면은 멀쩡한데 캡처만 깨지는 흔한 호환성 버그).
+ *  2) 스크린샷이라 글자가 이미지일 뿐이다 — 확대하면 흐려지고, 선택·검색이 안 되고,
+ *     파일도 쓸데없이 크다.
+ * 직접 그리면 이 문제가 전부 사라지고, 상용 리포트처럼 타이포그래피·여백·페이지
+ * 흐름을 우리가 온전히 통제할 수 있다. 대가는 한글 폰트를 직접 임베드해야 한다는
+ * 것 — Pretendard(OFL 라이선스) TTF를 `public/fonts/`에 둔다. `subset: true`로 실제
+ * 쓰인 글자만 넣어 파일을 줄이고 싶었지만, `@pdf-lib/fontkit`이 컴포지트 글리프
+ * 기반 한글 폰트를 서브셋할 때 일부 글자가 빈칸으로 빠지는 버그가 있어(재현 확인)
+ * 폰트 전체를 그대로 임베드한다 — 파일이 커지는 대신 모든 글자가 정확히 나온다.
  */
+import type { PDFDocument, PDFFont, PDFPage, RGB } from 'pdf-lib';
+import { FEATURE_LABELS, type FaceReading } from './types';
 
-const A4_MARGIN_MM = 10;
-const SECTION_GAP_MM = 4;
-const CAPTURE_BACKGROUND = '#1e1b3a';
+// pdf-lib/@pdf-lib/fontkit(수백 KB)는 이 함수를 실제로 쓸 때만 동적 import한다 —
+// 그래서 아래 색상 상수도 pdf-lib의 rgb() 대신, 같은 모양의 리터럴을 직접 만든다
+// (타입만 pdf-lib에서 가져오고, 런타임 값은 모듈 top-level에서 pdf-lib을 필요로 하지
+// 않게 하기 위함 — 안 그러면 이 파일을 import하는 순간 pdf-lib이 즉시 번들에 딸려온다).
+function rgbColor(red: number, green: number, blue: number): RGB {
+  return { type: 'RGB', red, green, blue } as RGB;
+}
 
-export async function exportResultAsPdf(element: HTMLElement, filename: string): Promise<void> {
-  const html2canvas = (await import('html2canvas')).default;
-  const { jsPDF } = await import('jspdf');
+// ---- 페이지 규격 (A4, pt 단위 — 1pt = 1/72inch) ----
+const PAGE_WIDTH = 595.28;
+const PAGE_HEIGHT = 841.89;
+const MARGIN = 48;
+const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
 
-  const sections = Array.from(element.querySelectorAll<HTMLElement>('[data-pdf-section]'));
-  const targets = sections.length > 0 ? sections : [element];
+// ---- 색상: 밝은 배경에 짙은 잉크색 본문 + 포인트 컬러 하나로 통일한다.
+// (카드마다 색이 다르던 화면 UI와 달리, 인쇄물은 절제된 팔레트가 더 고급스럽다.)
+const COLOR_INK = rgbColor(0.13, 0.14, 0.18);
+const COLOR_SUBTLE = rgbColor(0.45, 0.47, 0.53);
+const COLOR_ACCENT = rgbColor(0.43, 0.23, 0.66);
+const COLOR_RULE = rgbColor(0.87, 0.85, 0.92);
+const COLOR_WHITE = rgbColor(1, 1, 1);
 
-  const pdf = new jsPDF('p', 'mm', 'a4');
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const contentWidth = pageWidth - A4_MARGIN_MM * 2;
-  const maxContentHeight = pageHeight - A4_MARGIN_MM * 2;
+const FONT_URLS = { regular: '/fonts/Pretendard-Regular.ttf', bold: '/fonts/Pretendard-Bold.ttf' };
 
-  let cursorY = A4_MARGIN_MM;
-  let hasContentOnPage = false;
-  let forceNewPageForNext = false;
+/** 폰트는 한 번만 내려받아 세션 내내 재사용한다(수 MB짜리 파일이라 재요청을 피한다). */
+let cachedFontBytes: Promise<{ regular: ArrayBuffer; bold: ArrayBuffer }> | null = null;
 
-  for (const section of targets) {
-    if (forceNewPageForNext) {
-      pdf.addPage();
-      cursorY = A4_MARGIN_MM;
-      hasContentOnPage = false;
-      forceNewPageForNext = false;
-    }
+function loadFontBytes() {
+  if (!cachedFontBytes) {
+    cachedFontBytes = Promise.all([
+      fetch(FONT_URLS.regular).then((r) => r.arrayBuffer()),
+      fetch(FONT_URLS.bold).then((r) => r.arrayBuffer()),
+    ]).then(([regular, bold]) => ({ regular, bold }));
+  }
+  return cachedFontBytes;
+}
 
-    const canvas = await captureSection(html2canvas, section);
-    const imgData = canvas.toDataURL('image/png');
-    const imgHeight = (canvas.height * contentWidth) / canvas.width;
+/** 페이지 하나를 그리는 동안의 커서 상태. 섹션을 그릴 때마다 넘겨받아 갱신한다. */
+interface ReportContext {
+  doc: PDFDocument;
+  regular: PDFFont;
+  bold: PDFFont;
+  page: PDFPage;
+  /** 다음 내용이 그려질 y좌표(위쪽 기준). pdf-lib 좌표계는 아래에서 위로 증가한다. */
+  cursorY: number;
+}
 
-    if (imgHeight <= maxContentHeight) {
-      // 지금 페이지에 남은 공간에 안 들어가면 카드째로 다음 페이지로 넘긴다 —
-      // 카드 중간이 잘리는 일이 없다.
-      if (hasContentOnPage && cursorY + imgHeight > pageHeight - A4_MARGIN_MM) {
-        pdf.addPage();
-        cursorY = A4_MARGIN_MM;
-        hasContentOnPage = false;
-      }
-      pdf.addImage(imgData, 'PNG', A4_MARGIN_MM, cursorY, contentWidth, imgHeight);
-      cursorY += imgHeight + SECTION_GAP_MM;
-      hasContentOnPage = true;
+function newPage(ctx: ReportContext): void {
+  ctx.page = ctx.doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  ctx.cursorY = PAGE_HEIGHT - MARGIN;
+}
+
+/** 앞으로 그릴 내용에 최소 이만큼의 세로 공간이 필요하다 — 안 되면 새 페이지로 넘긴다. */
+function ensureSpace(ctx: ReportContext, neededHeight: number): void {
+  if (ctx.cursorY - neededHeight < MARGIN) {
+    newPage(ctx);
+  }
+}
+
+/**
+ * 텍스트를 주어진 너비에 맞춰 줄 단위로 나눈다. 공백 기준으로 단어를 채워 넣다가,
+ * 단어 하나가 통째로 너무 길면(드묾) 글자 단위로 강제로 자른다.
+ */
+function wrapLines(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [''];
+
+  const lines: string[] = [];
+  let current = '';
+
+  const flush = () => {
+    if (current) lines.push(current);
+    current = '';
+  };
+
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
+      current = candidate;
       continue;
     }
 
-    // 카드 하나가 페이지 하나보다 긴 드문 경우 — 이 카드만 여러 페이지로 잘라 찍는다.
-    if (hasContentOnPage) {
-      pdf.addPage();
+    flush();
+
+    if (font.widthOfTextAtSize(word, size) <= maxWidth) {
+      current = word;
+      continue;
     }
-    let remaining = imgHeight;
-    let sliceIndex = 0;
-    while (remaining > 0) {
-      if (sliceIndex > 0) pdf.addPage();
-      const y = A4_MARGIN_MM - sliceIndex * maxContentHeight;
-      pdf.addImage(imgData, 'PNG', A4_MARGIN_MM, y, contentWidth, imgHeight);
-      remaining -= maxContentHeight;
-      sliceIndex++;
-    }
-    // 다음 카드는 이 카드의 마지막 조각 아래 얼마나 공간이 남았는지 계산하지 않고,
-    // 안전하게 새 페이지에서 다시 시작한다.
-    forceNewPageForNext = true;
-  }
 
-  pdf.save(filename);
-}
-
-/**
- * 카드 하나를 캡처한다. 카드 안에 미리보기 사진(<img>)이 있으면, html2canvas가
- * object-fit을 반영하지 못해 사진이 찌그러지는 문제를 우회하기 위해 화면에 보이는
- * 비율 그대로 미리 크롭한 이미지로 바꿔 넣는다.
- */
-async function captureSection(
-  html2canvas: (typeof import('html2canvas'))['default'],
-  section: HTMLElement
-): Promise<HTMLCanvasElement> {
-  const originalImg = section.querySelector('img');
-  const croppedPreview =
-    originalImg instanceof HTMLImageElement && originalImg.complete && originalImg.naturalWidth > 0
-      ? cropImageToDisplayedBox(originalImg)
-      : null;
-
-  return html2canvas(section, {
-    scale: 2,
-    useCORS: true,
-    backgroundColor: CAPTURE_BACKGROUND,
-    onclone: (_document, clonedRoot) => {
-      if (!croppedPreview) return;
-      const clonedImg = clonedRoot.querySelector('img');
-      if (clonedImg instanceof HTMLImageElement) {
-        // 이미 화면 비율대로 중앙 크롭해 둔 이미지라 object-fit이 필요 없다 —
-        // 그대로 박스를 채우기만 하면 된다.
-        clonedImg.src = croppedPreview;
-        clonedImg.style.objectFit = 'fill';
-        clonedImg.removeAttribute('srcset');
+    let chunk = '';
+    for (const ch of word) {
+      const next = chunk + ch;
+      if (font.widthOfTextAtSize(next, size) <= maxWidth) {
+        chunk = next;
+      } else {
+        if (chunk) lines.push(chunk);
+        chunk = ch;
       }
-    },
-  });
+    }
+    current = chunk;
+  }
+  flush();
+
+  return lines.length > 0 ? lines : [''];
+}
+
+function drawParagraph(
+  ctx: ReportContext,
+  text: string,
+  opts: { font?: PDFFont; size?: number; color?: RGB; lineHeight?: number } = {}
+): void {
+  const font = opts.font ?? ctx.regular;
+  const size = opts.size ?? 11;
+  const color = opts.color ?? COLOR_INK;
+  const lineHeight = opts.lineHeight ?? size * 1.6;
+
+  for (const line of wrapLines(text, font, size, CONTENT_WIDTH)) {
+    ensureSpace(ctx, lineHeight);
+    ctx.page.drawText(line, { x: MARGIN, y: ctx.cursorY - size, size, font, color });
+    ctx.cursorY -= lineHeight;
+  }
+}
+
+/** 라벨(포인트 컬러, 작게) + 본문 문단. 얼굴 특징·조언 등 "라벨: 설명" 형태에 쓴다. */
+function drawLabeledParagraph(ctx: ReportContext, label: string, body: string): void {
+  ensureSpace(ctx, 16);
+  ctx.page.drawText(label, { x: MARGIN, y: ctx.cursorY - 10, size: 10, font: ctx.bold, color: COLOR_ACCENT });
+  ctx.cursorY -= 16;
+  drawParagraph(ctx, body, { size: 11.5 });
+  ctx.cursorY -= 10;
+}
+
+function drawBulletList(ctx: ReportContext, items: string[]): void {
+  const bulletIndent = 14;
+  for (const item of items) {
+    const lines = wrapLines(item, ctx.regular, 11, CONTENT_WIDTH - bulletIndent);
+    lines.forEach((line, i) => {
+      ensureSpace(ctx, 17);
+      if (i === 0) {
+        ctx.page.drawText('•', { x: MARGIN, y: ctx.cursorY - 11, size: 11, font: ctx.regular, color: COLOR_ACCENT });
+      }
+      ctx.page.drawText(line, {
+        x: MARGIN + bulletIndent,
+        y: ctx.cursorY - 11,
+        size: 11,
+        font: ctx.regular,
+        color: COLOR_INK,
+      });
+      ctx.cursorY -= 17;
+    });
+  }
 }
 
 /**
- * <img>가 화면에서 실제로 차지하는 박스(object-fit: cover 적용 결과)에 맞춰 원본을
- * 중앙 기준으로 잘라낸 새 이미지를 만든다.
- *
- * html2canvas는 <img>의 object-fit을 지원하지 않아 원본을 박스 크기로 그냥 눌러
- * 늘려버린다 — 세로로 긴 인물 사진일수록 가로로 찌그러져 보이는 원인이었다. 캡처
- * 대상을 넘기기 전에 우리가 직접 크롭해서 이 문제를 피해간다.
+ * 강점/약점처럼 짧은 두 목록을 좌우로 나란히 찍는다. 두 컬럼 다 짧다는 전제하에
+ * (LLM이 만드는 항목은 몇 단어 수준) 페이지 중간에 컬럼이 끊기는 경우는 다루지
+ * 않는다 — 시작 전에 넉넉히 ensureSpace를 걸어 같은 페이지에 들어가게 한다.
  */
-function cropImageToDisplayedBox(img: HTMLImageElement): string | null {
-  const rect = img.getBoundingClientRect();
-  const boxWidth = Math.max(1, Math.round(rect.width));
-  const boxHeight = Math.max(1, Math.round(rect.height));
+function drawTwoColumnBullets(
+  ctx: ReportContext,
+  left: { title: string; items: string[] },
+  right: { title: string; items: string[] }
+): void {
+  const colGap = 24;
+  const colWidth = (CONTENT_WIDTH - colGap) / 2;
+  const leftX = MARGIN;
+  const rightX = MARGIN + colWidth + colGap;
+
+  const estimatedLines =
+    left.items.reduce((n, item) => n + wrapLines(item, ctx.regular, 10.5, colWidth - 12).length, 0) +
+    right.items.reduce((n, item) => n + wrapLines(item, ctx.regular, 10.5, colWidth - 12).length, 0);
+  ensureSpace(ctx, 20 + estimatedLines * 15);
+
+  ctx.page.drawText(left.title, { x: leftX, y: ctx.cursorY - 10, size: 10, font: ctx.bold, color: COLOR_ACCENT });
+  ctx.page.drawText(right.title, { x: rightX, y: ctx.cursorY - 10, size: 10, font: ctx.bold, color: COLOR_ACCENT });
+  const startY = ctx.cursorY - 16;
+
+  const drawColumn = (items: string[], x: number): number => {
+    let y = startY;
+    for (const item of items) {
+      const lines = wrapLines(item, ctx.regular, 10.5, colWidth - 12);
+      lines.forEach((line, i) => {
+        if (i === 0) {
+          ctx.page.drawText('•', { x, y: y - 10.5, size: 10.5, font: ctx.regular, color: COLOR_ACCENT });
+        }
+        ctx.page.drawText(line, { x: x + 12, y: y - 10.5, size: 10.5, font: ctx.regular, color: COLOR_INK });
+        y -= 15;
+      });
+    }
+    return y;
+  };
+
+  const leftEndY = drawColumn(left.items, leftX);
+  const rightEndY = drawColumn(right.items, rightX);
+  ctx.cursorY = Math.min(leftEndY, rightEndY) - 10;
+}
+
+/** 섹션 제목 — 포인트 컬러 바 + 굵은 제목 + 얇은 구분선. */
+function drawSectionHeading(ctx: ReportContext, title: string): void {
+  ensureSpace(ctx, 40);
+  const size = 15;
+  ctx.page.drawRectangle({
+    x: MARGIN,
+    y: ctx.cursorY - size + 2,
+    width: 4,
+    height: size - 2,
+    color: COLOR_ACCENT,
+  });
+  ctx.page.drawText(title, { x: MARGIN + 12, y: ctx.cursorY - size, size, font: ctx.bold, color: COLOR_INK });
+  ctx.cursorY -= size + 8;
+  ctx.page.drawLine({
+    start: { x: MARGIN, y: ctx.cursorY },
+    end: { x: PAGE_WIDTH - MARGIN, y: ctx.cursorY },
+    thickness: 0.75,
+    color: COLOR_RULE,
+  });
+  ctx.cursorY -= 16;
+}
+
+/** 오행 글자를 담은 작은 원형 배지 + "오행 · X" 라벨, 그 아래 설명 문단. */
+function drawSajuBadge(ctx: ReportContext, element: string, reason: string): void {
+  ensureSpace(ctx, 40);
+  const radius = 14;
+  const cx = MARGIN + radius;
+  const cy = ctx.cursorY - radius;
+
+  ctx.page.drawCircle({ x: cx, y: cy, size: radius, color: COLOR_ACCENT });
+  const charSize = 14;
+  const charWidth = ctx.bold.widthOfTextAtSize(element, charSize);
+  ctx.page.drawText(element, {
+    x: cx - charWidth / 2,
+    y: cy - charSize / 2 + 1,
+    size: charSize,
+    font: ctx.bold,
+    color: COLOR_WHITE,
+  });
+  ctx.page.drawText(`오행 · ${element}`, {
+    x: cx + radius + 10,
+    y: cy - 5,
+    size: 12,
+    font: ctx.bold,
+    color: COLOR_ACCENT,
+  });
+
+  ctx.cursorY -= radius * 2 + 14;
+  drawParagraph(ctx, reason, { size: 11.5 });
+  ctx.cursorY -= 4;
+}
+
+function drawCenteredText(
+  ctx: ReportContext,
+  text: string,
+  font: PDFFont,
+  size: number,
+  color: RGB,
+  gapAfter: number
+): void {
+  ensureSpace(ctx, size + gapAfter);
+  const width = font.widthOfTextAtSize(text, size);
+  ctx.page.drawText(text, { x: (PAGE_WIDTH - width) / 2, y: ctx.cursorY - size, size, font, color });
+  ctx.cursorY -= size + gapAfter;
+}
+
+/** data URL 이미지를 원하는 가로세로 비율로 중앙 크롭해 PNG 바이트로 만든다. */
+async function cropToAspectPng(
+  dataUrl: string,
+  aspect: number,
+  outWidth: number,
+  outHeight: number
+): Promise<Uint8Array> {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error('이미지를 불러오지 못했습니다'));
+    el.src = dataUrl;
+  });
 
   const canvas = document.createElement('canvas');
-  const outScale = 2; // 카드 본 캡처의 scale:2와 화질을 맞춘다.
-  canvas.width = boxWidth * outScale;
-  canvas.height = boxHeight * outScale;
+  canvas.width = outWidth;
+  canvas.height = outHeight;
+  const ctx2d = canvas.getContext('2d');
+  if (!ctx2d) throw new Error('canvas 2D context를 만들지 못했습니다');
 
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-
-  const boxRatio = boxWidth / boxHeight;
   const imgRatio = img.naturalWidth / img.naturalHeight;
-
   let sx = 0;
   let sy = 0;
   let sw = img.naturalWidth;
   let sh = img.naturalHeight;
-
-  if (imgRatio > boxRatio) {
-    // 원본이 박스보다 가로로 길다 — 좌우를 잘라낸다.
-    sw = img.naturalHeight * boxRatio;
+  if (imgRatio > aspect) {
+    sw = img.naturalHeight * aspect;
     sx = (img.naturalWidth - sw) / 2;
   } else {
-    // 원본이 박스보다 세로로 길다 — 위아래를 잘라낸다.
-    sh = img.naturalWidth / boxRatio;
+    sh = img.naturalWidth / aspect;
     sy = (img.naturalHeight - sh) / 2;
   }
+  ctx2d.drawImage(img, sx, sy, sw, sh, 0, 0, outWidth, outHeight);
 
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/png');
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+  if (!blob) throw new Error('이미지를 PNG로 인코딩하지 못했습니다');
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+/**
+ * 표지 헤더: 사진 중앙 정렬 + 제목/부제/날짜를 그 아래 가운데 정렬로 배치한다.
+ * (이전 버전에서 사진이 왼쪽으로 치우쳐 보이던 것과 달리, 전체를 페이지 중앙 축에
+ * 맞춰 대칭적으로 배치한다.)
+ */
+async function drawCoverHeader(ctx: ReportContext, preview: string | null): Promise<void> {
+  const photoWidth = 108;
+  const photoAspect = 4 / 5; // 인물사진에 흔한 세로 비율
+  const photoHeight = photoWidth / photoAspect;
+
+  if (preview) {
+    ensureSpace(ctx, photoHeight + 20);
+    const cropped = await cropToAspectPng(preview, photoAspect, 480, 600);
+    const img = await ctx.doc.embedPng(cropped);
+    const x = (PAGE_WIDTH - photoWidth) / 2;
+    const y = ctx.cursorY - photoHeight;
+    ctx.page.drawRectangle({
+      x: x - 3,
+      y: y - 3,
+      width: photoWidth + 6,
+      height: photoHeight + 6,
+      borderColor: COLOR_ACCENT,
+      borderWidth: 1.5,
+    });
+    ctx.page.drawImage(img, { x, y, width: photoWidth, height: photoHeight });
+    ctx.cursorY = y - 24;
+  }
+
+  drawCenteredText(ctx, '관상사주 분석 리포트', ctx.bold, 22, COLOR_INK, 12);
+  drawCenteredText(ctx, 'AI가 분석한 관상과 사주 해석', ctx.regular, 12, COLOR_SUBTLE, 8);
+  const dateStr = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
+  drawCenteredText(ctx, `생성일 · ${dateStr}`, ctx.regular, 10, COLOR_SUBTLE, 20);
+
+  ctx.page.drawLine({
+    start: { x: MARGIN, y: ctx.cursorY },
+    end: { x: PAGE_WIDTH - MARGIN, y: ctx.cursorY },
+    thickness: 1,
+    color: COLOR_ACCENT,
+  });
+  ctx.cursorY -= 26;
+}
+
+/** 모든 내용을 다 그린 뒤, 각 페이지 하단에 페이지 번호와 안내 문구를 찍는다. */
+function stampFooters(doc: PDFDocument, regular: PDFFont): void {
+  const pages = doc.getPages();
+  const disclaimer = '이 분석은 재미 목적입니다. 신뢰할 수 있는 출처로는 사용하지 마세요.';
+
+  pages.forEach((page, i) => {
+    const disclaimerSize = 8;
+    const disclaimerWidth = regular.widthOfTextAtSize(disclaimer, disclaimerSize);
+    page.drawText(disclaimer, {
+      x: (PAGE_WIDTH - disclaimerWidth) / 2,
+      y: MARGIN / 2 + 6,
+      size: disclaimerSize,
+      font: regular,
+      color: COLOR_SUBTLE,
+    });
+
+    const pageLabel = `${i + 1} / ${pages.length}`;
+    const pageLabelSize = 9;
+    const pageLabelWidth = regular.widthOfTextAtSize(pageLabel, pageLabelSize);
+    page.drawText(pageLabel, {
+      x: (PAGE_WIDTH - pageLabelWidth) / 2,
+      y: MARGIN / 2 - 8,
+      size: pageLabelSize,
+      font: regular,
+      color: COLOR_SUBTLE,
+    });
+  });
+}
+
+function downloadPdfBytes(bytes: Uint8Array, filename: string): void {
+  const blob = new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export async function exportResultAsPdf(
+  result: FaceReading,
+  preview: string | null,
+  filename: string
+): Promise<void> {
+  const [{ regular: regularBytes, bold: boldBytes }, { PDFDocument }, fontkitModule] = await Promise.all([
+    loadFontBytes(),
+    import('pdf-lib'),
+    import('@pdf-lib/fontkit'),
+  ]);
+
+  const doc = await PDFDocument.create();
+  doc.registerFontkit(fontkitModule.default);
+  // subset: true는 켜지 않는다 — @pdf-lib/fontkit이 Pretendard처럼 한글 음절을
+  // 컴포지트 글리프(획을 조합해 만드는 방식)로 최적화한 폰트를 서브셋하면, 일부
+  // 글자가 빈칸으로 빠지는 게 알려진 버그다(실제로 재현 확인함). 파일이 커지는 대신
+  // 폰트 전체를 그대로 넣어 이 문제를 피한다.
+  const regular = await doc.embedFont(regularBytes, { subset: false });
+  const bold = await doc.embedFont(boldBytes, { subset: false });
+
+  const ctx: ReportContext = {
+    doc,
+    regular,
+    bold,
+    page: doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]),
+    cursorY: PAGE_HEIGHT - MARGIN,
+  };
+
+  await drawCoverHeader(ctx, preview);
+
+  drawSectionHeading(ctx, '얼굴 특징');
+  (Object.keys(FEATURE_LABELS) as (keyof typeof FEATURE_LABELS)[]).forEach((key) => {
+    drawLabeledParagraph(ctx, FEATURE_LABELS[key], result.features[key]);
+  });
+
+  drawSectionHeading(ctx, '성격 해석');
+  drawParagraph(ctx, result.personality.summary, { size: 11.5 });
+  ctx.cursorY -= 6;
+  drawTwoColumnBullets(
+    ctx,
+    { title: '강점', items: result.personality.strengths },
+    { title: '약점', items: result.personality.weaknesses }
+  );
+  drawLabeledParagraph(ctx, '대인관계', result.personality.social);
+
+  drawSectionHeading(ctx, '사주와의 연관');
+  drawSajuBadge(ctx, result.saju.element, result.saju.elementReason);
+  drawLabeledParagraph(ctx, '운세 경향', result.saju.fortune);
+  drawLabeledParagraph(ctx, '조언', result.saju.advice);
+
+  drawSectionHeading(ctx, '어울리는 이성');
+  drawParagraph(ctx, result.love.idealPartner.type, { font: bold, size: 13.5 });
+  ctx.cursorY -= 6;
+  ensureSpace(ctx, 16);
+  ctx.page.drawText('잘 맞는 성향', {
+    x: MARGIN,
+    y: ctx.cursorY - 10,
+    size: 10,
+    font: bold,
+    color: COLOR_ACCENT,
+  });
+  ctx.cursorY -= 16;
+  drawBulletList(ctx, result.love.idealPartner.traits);
+  ctx.cursorY -= 6;
+  drawLabeledParagraph(ctx, '근거', result.love.idealPartner.reason);
+
+  drawSectionHeading(ctx, '애정운');
+  drawLabeledParagraph(ctx, '연애 성향', result.love.romance.tendency);
+  drawLabeledParagraph(ctx, '애정운 흐름', result.love.romance.fortune);
+  drawLabeledParagraph(ctx, '주의할 점', result.love.romance.caution);
+
+  stampFooters(doc, regular);
+
+  const bytes = await doc.save();
+  downloadPdfBytes(bytes, filename);
 }
