@@ -10,6 +10,7 @@ import {
   type FaceReading,
 } from '@/lib/types';
 import { saveResult, loadResult, clearResult } from '@/lib/storage';
+import { exportResultAsPdf } from '@/lib/pdf';
 import UploadPanel from './components/UploadPanel';
 import ResultView from './components/ResultView';
 import ErrorBanner from './components/ErrorBanner';
@@ -26,7 +27,9 @@ type View =
 export default function Home() {
   const [preview, setPreview] = useState<string | null>(null);
   const [view, setView] = useState<View>({ phase: 'idle' });
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
 
   /** 마운트 시 저장된 결과가 있으면 복원한다. 렌더 중이 아닌 effect 안에서만 window를 만진다 (E5). */
   useEffect(() => {
@@ -143,6 +146,22 @@ export default function Home() {
     setView({ phase: 'idle' });
   };
 
+  /** 결과 DOM을 그대로 캡처해 PDF로 내려받는다. 화면에 보이는 것과 동일하게 나온다. */
+  const handleExportPdf = async () => {
+    if (!resultRef.current || isExportingPdf) return;
+
+    setIsExportingPdf(true);
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      await exportResultAsPdf(resultRef.current, `관상사주_분석결과_${today}.pdf`);
+    } catch {
+      // PDF 생성 실패로 화면의 결과(정상 데이터)까지 날릴 이유는 없다 — 조용히 알리기만 한다.
+      window.alert('PDF를 만드는 데 실패했습니다. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
   /** 결과 화면에서 완전히 초기화한다 (B6): 미리보기·결과·오류를 모두 지운다. 저장된 결과도 함께 지운다. */
   const handleReset = () => {
     setPreview(null);
@@ -171,13 +190,27 @@ export default function Home() {
               {view.restored && (
                 <p className="text-center text-gray-400 text-xs">이전에 본 결과입니다</p>
               )}
-              <ResultView preview={preview} result={view.result} />
-              <button
-                onClick={handleReset}
-                className="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg transition"
+              <div
+                ref={resultRef}
+                className="bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 rounded-xl p-4"
               >
-                다시 분석하기
-              </button>
+                <ResultView preview={preview} result={view.result} />
+              </div>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={handleExportPdf}
+                  disabled={isExportingPdf}
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-lg transition"
+                >
+                  {isExportingPdf ? 'PDF 생성 중...' : '📄 PDF로 저장'}
+                </button>
+                <button
+                  onClick={handleReset}
+                  className="flex-1 bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg transition"
+                >
+                  다시 분석하기
+                </button>
+              </div>
             </div>
           ) : view.phase === 'error' && view.code === 'NO_FACE' ? (
             <NoFaceNotice message={view.message} onRetry={handleBackToUpload} />
